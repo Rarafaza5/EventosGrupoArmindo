@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Armindo Awards 2025</title>
+
+  <link rel="icon" href="https://img.icons8.com/color/48/000000/trophy.png" type="image/png" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="estilo.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Montserrat:wght@300;400;600&family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+
+  <style>
+    .custom-controls {
+      display: flex;
+      justify-content: center;
+      margin-top: 10px;
+      gap: 10px;
+    }
+
+    .custom-controls button {
+      background-color: #1a1a2e;
+      border: 1px solid #ffd700;
+      color: #ffd700;
+      padding: 12px;
+      border-radius: 50%;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .custom-controls button:hover {
+      background-color: #ffd700;
+      border: 1px solid #1a1a2e;
+      color: #1a1a2e;
+    }
+
+    .custom-controls button:active {
+      transform: scale(0.95);
+    }
+
+    .video-container {
+      position: relative;
+      max-width: 1280px;
+      margin: auto;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background-color: black;
+    }
+
+    .video-container iframe {
+      width: 100%;
+      height: 100%;
+    }
+
+    .video-overlay-blocker {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+    }
+
+    .custom-overlay-info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      gap: 15px;
+      color: white;
+      font-weight: bold;
+      z-index: 2;
+    }
+
+    .live-indicator i {
+      color: red;
+    }
+
+    .info-chat-section {
+      display: flex;
+      gap: 30px;
+      padding: 30px;
+      flex-wrap: wrap;
+    }
+
+    .agenda-container,
+    .chat-container {
+      flex: 1;
+      min-width: 300px;
+      background: #0e0e19;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .chat-input-area {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .chat-input-area input {
+      flex: 1;
+      padding: 10px;
+    }
+
+    .chat-input-area button {
+      padding: 10px 15px;
+    }
+  </style>
+</head>
+<body>
+ 
+
+  <main class="main-content">
+    <section class="player-section">
+      <div class="video-container custom-player-wrapper">
+        <div class="custom-overlay-info"></div>
+        <div id="video-player"></div>
+        <div class="video-overlay-blocker"></div>
+        <div class="custom-controls">
+          <button id="toggle-play-btn" aria-label="Play/Pause">‎<i class="fas fa-play">‎ </i></button>
+          <button id="mute-btn" aria-label="Mute"><i class="fas fa-volume-up"></i></button>
+          <button id="fullscreen-btn" aria-label="Fullscreen"><i class="fas fa-compress"></i></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="info-chat-section">
+      <div class="agenda-container">
+        <h2><i class="fas fa-calendar-alt"></i> Próximos Segmentos</h2>
+        <div id="agenda-list">
+          <p class="loading-message">Carregando agenda...</p>
+        </div>
+      </div>
+
+      <div class="chat-container">
+        <h2><i class="fas fa-comments"></i> Chat ao Vivo</h2>
+        <div id="chat-messages" class="chat-messages">
+          <p class="loading-message">Conectando ao chat...</p>
+        </div>
+        <div class="chat-input-area">
+          <input type="text" id="chat-username" placeholder="Seu Nome" maxlength="20" />
+          <input type="text" id="chat-message-input" placeholder="Digite sua mensagem..." maxlength="200" />
+          <button id="send-chat-message"><i class="fas fa-paper-plane"></i> Enviar</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="event-footer">
+ <p>© 2025 Armindo Awards e seu Sistema de Transmissão — Todos os direitos são reservados ao Grupo Armindo.<br>Este sistema utiliza tecnologias do Youtube e aplicam-se os seus <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer" style="color: var(--text-muted);">Termos e Condições</a> e <a href="https://policies.google.com/privacy?hl=pt-PT" target="_blank" rel="noopener noreferrer" style="color: var(--text-muted);">Política de Privacidade</a>.</p>
+  </footer>
+
+  <script>
+    let player;
+    let isPlaying = false;
+
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player("video-player", {
+        height: "100%",
+        width: "100%",
+        videoId: "QX4qNLK_Zko", // substitua pelo seu vídeo
+        playerVars: {
+          autoplay: true,
+          controls: 0,
+          modestbranding: 1,
+          rel: 0,
+          showinfo: 0
+        },
+        events: {
+          onReady: () => {
+            onPlayerReady();
+            isPlaying = true;
+            document.getElementById("toggle-play-btn").innerHTML = '‎<i class="fas fa-pause"></i>‎';
+          }
+        }
+      });
+    }
+
+    function onPlayerReady() {
+      const toggleBtn = document.getElementById("toggle-play-btn");
+      const muteBtn = document.getElementById("mute-btn");
+      const fullscreenBtn = document.getElementById("fullscreen-btn");
+      let isFullscreen = false;
+
+      toggleBtn.onclick = () => {
+        if (isPlaying) {
+          player.pauseVideo();
+          player.seekTo(player.getCurrentTime(), true); // impede "mais vídeos"
+          toggleBtn.innerHTML = '‎<i class="fas fa-play"></i>‎';
+        } else {
+          player.playVideo();
+          toggleBtn.innerHTML = '‎ ‎<i class="fas fa-pause"></i>‎ ‎';
+        }
+        isPlaying = !isPlaying;
+      };
+
+      muteBtn.onclick = () => {
+        if (player.isMuted()) {
+          player.unMute();
+          muteBtn.innerHTML = '<i class="fas fa-volume-up"></i>';
+        } else {
+          player.mute();
+          muteBtn.innerHTML = '<i class="fas fa-volume-mute"></i>';
+        }
+      };
+
+      fullscreenBtn.onclick = () => {
+        const container = document.querySelector(".video-container");
+        if (!isFullscreen) {
+          if (container.requestFullscreen) container.requestFullscreen();
+          else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen();
+          else if (container.msRequestFullscreen) container.msRequestFullscreen();
+        } else {
+          if (document.exitFullscreen) document.exitFullscreen();
+          else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+          else if (document.msExitFullscreen) document.msExitFullscreen();
+        }
+      };
+
+      document.addEventListener("fullscreenchange", () => {
+        isFullscreen = !!document.fullscreenElement;
+        fullscreenBtn.innerHTML = isFullscreen
+          ? '<i class="fas fa-compress"></i>'
+          : '<i class="fas fa-expand"></i>';
+      });
+    }
+
+    const tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+  </script>
+</body>
+</html>
