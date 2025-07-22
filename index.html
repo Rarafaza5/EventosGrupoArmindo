@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        #container {
+            background-color: #f0f8ff;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+       
+    </div>
+    <script>
+        let password = "AAwards#2025!";
+        (function passcodeprotect() {
+            let passcode = prompt("Palavra Passe");
+            while (passcode !== password) {
+                alert("Palavra Passe Incorreta");
+                return passcodeprotect();
+            }
+        }());
+        alert('Login executado com sucesso!');
+        window.location.replace("painel.html");
+    </script>
+</body>
+</html>
