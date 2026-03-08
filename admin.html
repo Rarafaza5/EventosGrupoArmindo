@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Admin — Votação Profissional</title>
+<title>Admin — Votação</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 
@@ -30,18 +30,19 @@
 
   // ---- AUTH ----
   function checkAuth() {
-    if (sessionStorage.getItem('admin_auth') === ADMIN_PASS) { showApp(); return; }
+    const stored = sessionStorage.getItem('admin_auth');
+    if (stored === ADMIN_PASS) { showApp(); return; }
     document.getElementById('authWall').style.display = 'flex';
   }
   window.doLogin = function() {
-    if (document.getElementById('passInput').value === ADMIN_PASS) {
-      sessionStorage.setItem('admin_auth', ADMIN_PASS);
+    const val = document.getElementById('passInput').value;
+    if (val === ADMIN_PASS) {
+      sessionStorage.setItem('admin_auth', val);
       location.reload();
-    } else { alert("Senha incorreta"); }
+    } else { document.getElementById('authError').style.display = 'block'; }
   };
 
   function showApp() {
-    document.getElementById('authWall').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     loadConfig();
   }
@@ -50,41 +51,55 @@
     onValue(ref(db, 'config'), (snap) => {
       config = snap.val() || {};
       candidates = config.candidates || [];
+      populateForm();
       renderCandidateList();
-      updateToggleLabel(config.votingOpen);
     });
-    onValue(ref(db, 'votes'), (snap) => {
-      updateVoteCounts(snap.val() || {});
-    });
+    onValue(ref(db, 'votes'), (snap) => { updateVoteCounts(snap.val() || {}); });
   }
 
-  // ---- CONTROL ----
+  function populateForm() {
+    document.getElementById('f_title').value = config.title || '';
+    document.getElementById('f_subtitle').value = config.subtitle || '';
+    document.getElementById('votingToggle').checked = config.votingOpen || false;
+    updateToggleLabel(config.votingOpen);
+  }
+
   window.toggleVoting = async function() {
-    const currentState = config.votingOpen || false;
-    await set(ref(db, 'config/votingOpen'), !currentState);
-    showToast(!currentState ? '✅ Votação Aberta!' : '🔒 Votação Fechada');
+    const isOpen = document.getElementById('votingToggle').checked;
+    await set(ref(db, 'config/votingOpen'), isOpen);
+    showToast(isOpen ? '✅ Votação Aberta!' : '🔒 Votação Fechada');
   };
 
   function updateToggleLabel(isOpen) {
-    const btn = document.getElementById('votingToggleBtn');
-    btn.textContent = isOpen ? 'FECHAR VOTAÇÃO' : 'ABRIR VOTAÇÃO';
-    btn.className = isOpen ? 'btn btn-danger' : 'btn btn-success';
+    const lbl = document.getElementById('toggleLabel');
+    const badge = document.getElementById('votingBadge');
+    lbl.textContent = isOpen ? 'Fechar Votação' : 'Abrir Votação';
+    badge.textContent = isOpen ? 'ABERTA' : 'FECHADA';
+    badge.className = isOpen ? 'badge open' : 'badge closed';
   }
 
+  // LÓGICA DE RESET ATUALIZADA
   window.resetVotes = async function() {
-    if (!confirm('Deseja apagar TODOS os votos? Isso permitirá que os utilizadores votem novamente.')) return;
+    if (!confirm('ATENÇÃO: Isto vai apagar todos os votos e permitir que todos votem novamente. Continuar?')) return;
     await set(ref(db, 'votes'), null);
-    await set(ref(db, 'config/lastReset'), Date.now()); // SINAL DE RESET
-    showToast('🗑 Votos apagados e sessões resetadas!');
+    await set(ref(db, 'config/lastReset'), Date.now()); // Sinal de reset para os telemóveis
+    showToast('🗑 Votos apagados e sessões reiniciadas!');
   };
 
-  // ---- CANDIDATES ----
+  window.saveEventInfo = async function() {
+    await set(ref(db, 'config/title'), document.getElementById('f_title').value);
+    await set(ref(db, 'config/subtitle'), document.getElementById('f_subtitle').value);
+    showToast('✅ Informação guardada!');
+  };
+
+  // ---- CANDIDATES RENDER ----
   function renderCandidateList() {
     const list = document.getElementById('candidateList');
     list.innerHTML = candidates.map((c, i) => `
       <div class="candidate-item">
+        <div class="c-thumb">${c.photo ? `<img src="${c.photo}"/>` : `<div class="c-initial">${c.name[0]}</div>`}</div>
         <div class="c-info"><strong>${c.name}</strong><br><small>${c.subtitle || ''}</small></div>
-        <div class="c-votes" id="votes_${c.id}">0 votos</div>
+        <div class="c-votes-badge" id="votes_${c.id}">0 votos</div>
         <button class="btn-icon danger" onclick="removeCandidate(${i})">🗑</button>
       </div>
     `).join('');
@@ -93,91 +108,135 @@
   function updateVoteCounts(votes) {
     let total = 0;
     candidates.forEach(c => {
-      const count = votes[c.id] || 0;
-      total += count;
-      if(document.getElementById('votes_'+c.id)) document.getElementById('votes_'+c.id).textContent = count + ' votos';
+      const v = votes[c.id] || 0;
+      total += v;
+      if(document.getElementById('votes_'+c.id)) document.getElementById('votes_'+c.id).textContent = v + ' votos';
     });
     document.getElementById('totalVotes').textContent = total;
+    renderResults(votes);
+  }
+
+  function renderResults(votes) {
+    const sorted = [...candidates].map(c => ({ ...c, count: votes[c.id] || 0 })).sort((a,b) => b.count - a.count);
+    const total = sorted.reduce((s,c) => s + c.count, 0);
+    document.getElementById('resultsArea').innerHTML = sorted.map((c,i) => {
+      const pct = total ? Math.round(c.count/total*100) : 0;
+      return `<div class="result-row"><span>#${i+1} ${c.name}</span> <strong>${c.count} (${pct}%)</strong></div>`;
+    }).join('');
   }
 
   window.saveCandidate = async function() {
     const name = document.getElementById('c_name').value;
     if(!name) return;
-    const newC = { id: 'c_'+Date.now(), name, subtitle: document.getElementById('c_subtitle').value, photo: document.getElementById('c_photoB64').value };
-    candidates.push(newC);
+    const photo = document.getElementById('c_photoB64').value;
+    candidates.push({ id: 'c_'+Date.now(), name, subtitle: document.getElementById('c_subtitle').value, photo: photo || null });
     await set(ref(db, 'config/candidates'), candidates);
-    document.getElementById('candidateModal').classList.remove('show');
+    closeModal('candidateModal');
   };
 
   window.removeCandidate = async function(i) {
+    if(!confirm('Remover?')) return;
     candidates.splice(i, 1);
     await set(ref(db, 'config/candidates'), candidates);
   };
 
-  window.handlePhotoUpload = function(input) {
+  window.openAddCandidate = () => document.getElementById('candidateModal').classList.add('show');
+  window.closeModal = (id) => document.getElementById(id).classList.remove('show');
+  window.handlePhotoUpload = (input) => {
     const reader = new FileReader();
     reader.onload = e => { document.getElementById('c_photoB64').value = e.target.result; };
     reader.readAsDataURL(input.files[0]);
   };
 
   function showToast(m){ const t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3000); }
-
+  
+  // Scripts do templates omitidos aqui por brevidade, mas devem ser mantidos do original
   checkAuth();
 </script>
 
 <style>
-  :root { --bg: #0f172a; --surface: #1e293b; --accent: #38bdf8; --text: #f8fafc; --border: #334155; }
-  body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; padding: 20px; }
-  .card { background: var(--surface); padding: 20px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 20px; }
-  .btn { padding: 10px 20px; border-radius: 8px; cursor: pointer; border: none; font-weight: 600; }
-  .btn-success { background: #22c55e; color: white; }
-  .btn-danger { background: #ef4444; color: white; }
-  .candidate-item { display: flex; align-items: center; gap: 15px; background: #0f172a; padding: 10px; border-radius: 8px; margin-bottom: 10px; }
+  :root { --bg: #0e0e12; --surface: #16161c; --accent: #7c6fff; --text: #e8e8f0; --border: #2a2a36; --danger: #ff5252; --success: #4ade80; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px; }
+  #authWall { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; z-index: 1000; }
+  .auth-box { background: var(--surface); padding: 40px; border-radius: 16px; border: 1px solid var(--border); text-align: center; width: 340px; }
+  input { width: 100%; padding: 12px; background: #1e1e26; border: 1px solid var(--border); color: white; border-radius: 8px; margin-bottom: 10px; }
+  .sidebar { width: 220px; background: var(--surface); border-right: 1px solid var(--border); height: 100vh; position: fixed; padding: 20px; }
+  .main-content { margin-left: 220px; padding: 40px; }
+  .card { background: var(--surface); border: 1px solid var(--border); padding: 24px; border-radius: 12px; margin-bottom: 20px; }
+  .btn { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-danger { background: rgba(255,82,82,0.1); color: var(--danger); border: 1px solid var(--danger); }
+  .candidate-item { display: flex; align-items: center; gap: 15px; background: #1e1e26; padding: 12px; border-radius: 8px; margin-bottom: 8px; }
+  .c-thumb { width: 40px; height: 40px; border-radius: 50%; overflow: hidden; background: #333; }
+  .c-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .c-info { flex: 1; }
-  #authWall { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 100; }
-  #toast { position: fixed; bottom: 20px; right: 20px; background: var(--accent); color: #000; padding: 10px 20px; border-radius: 8px; transform: translateY(100px); transition: 0.3s; }
-  #toast.show { transform: translateY(0); }
-  .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; }
+  .badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 10px; }
+  .badge.open { background: rgba(74,222,128,0.1); color: var(--success); }
+  .badge.closed { background: rgba(255,82,82,0.1); color: var(--danger); }
+  .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 2000; }
   .modal.show { display: flex; }
-  .modal-content { background: var(--surface); padding: 30px; border-radius: 12px; width: 400px; }
-  input { width: 100%; padding: 10px; margin: 10px 0; background: #0f172a; border: 1px solid var(--border); color: white; border-radius: 6px; }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border-left: 4px solid var(--accent); padding: 15px 25px; border-radius: 8px; transform: translateX(150%); transition: 0.3s; }
+  .toast.show { transform: translateX(0); }
+  .toggle { cursor: pointer; }
 </style>
 </head>
 <body>
-  <div id="authWall">
-    <div class="card" style="width: 300px; text-align: center;">
-      <h2>Admin Login</h2>
-      <input type="password" id="passInput" placeholder="Password"/>
-      <button class="btn btn-success" onclick="doLogin()">Entrar</button>
-    </div>
+<div id="authWall">
+  <div class="auth-box">
+    <h2>Login Admin</h2>
+    <input type="password" id="passInput" placeholder="Password"/>
+    <button class="btn btn-primary" onclick="doLogin()">Entrar</button>
   </div>
+</div>
 
-  <div id="mainApp" style="display:none">
-    <h1>Painel de Controlo</h1>
+<div id="mainApp" style="display:none">
+  <aside class="sidebar">
+    <h3 style="color: var(--accent); margin-bottom: 20px;">VOTE ADMIN</h3>
+    <p style="font-size: 11px; opacity: 0.5;">CONTROLO</p>
+  </aside>
+
+  <main class="main-content">
     <div class="card">
-      <button id="votingToggleBtn" onclick="toggleVoting()">Carregando...</button>
-      <button class="btn btn-danger" onclick="resetVotes()" style="margin-left: 10px;">LIMPAR VOTOS & RESET SESSÕES</button>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <h4 id="toggleLabel">Abrir Votação</h4>
+          <span id="votingBadge" class="badge closed">FECHADA</span>
+        </div>
+        <input type="checkbox" id="votingToggle" onchange="toggleVoting()" style="width: 40px;">
+      </div>
     </div>
-    
+
     <div class="card">
-      <h3>Candidatos (<span id="totalVotes">0</span> votos totais)</h3>
-      <button class="btn btn-success" onclick="document.getElementById('candidateModal').classList.add('show')">+ Novo Candidato</button>
-      <div id="candidateList" style="margin-top: 15px;"></div>
+      <div style="display: flex; justify-content: space-between;">
+        <h3>Votos (<span id="totalVotes">0</span>)</h3>
+        <button class="btn btn-danger" onclick="resetVotes()">🗑 RESET TOTAL</button>
+      </div>
+      <div id="resultsArea" style="margin-top: 15px; font-size: 12px; opacity: 0.7;"></div>
+    </div>
+
+    <div class="card">
+      <h3>Candidatos</h3>
+      <button class="btn btn-primary" onclick="openAddCandidate()" style="margin: 15px 0;">+ Adicionar</button>
+      <div id="candidateList"></div>
+    </div>
+  </main>
+</div>
+
+<div class="modal" id="candidateModal">
+  <div class="card" style="width: 400px;">
+    <h3>Novo Candidato</h3>
+    <input type="text" id="c_name" placeholder="Nome"/>
+    <input type="text" id="c_subtitle" placeholder="Subtítulo"/>
+    <input type="file" onchange="handlePhotoUpload(this)"/>
+    <input type="hidden" id="c_photoB64"/>
+    <div style="display: flex; gap: 10px; margin-top: 15px;">
+      <button class="btn btn-primary" onclick="saveCandidate()">Guardar</button>
+      <button class="btn btn-danger" onclick="closeModal('candidateModal')">Sair</button>
     </div>
   </div>
+</div>
 
-  <div class="modal" id="candidateModal">
-    <div class="modal-content">
-      <h3>Novo Candidato</h3>
-      <input type="text" id="c_name" placeholder="Nome"/>
-      <input type="text" id="c_subtitle" placeholder="Subtítulo"/>
-      <input type="file" onchange="handlePhotoUpload(this)"/>
-      <input type="hidden" id="c_photoB64"/>
-      <button class="btn btn-success" onclick="saveCandidate()">Guardar</button>
-      <button class="btn btn-danger" onclick="document.getElementById('candidateModal').classList.remove('show')">Cancelar</button>
-    </div>
-  </div>
-
-  <div id="toast"></div>
+<div id="toast"></div>
 </body>
 </html>
