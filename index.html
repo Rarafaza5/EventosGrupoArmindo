@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Votação Oficial</title>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Outfit:wght@300;600&display=swap" rel="stylesheet"/>
+<title>Votação</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300&family=Outfit:wght@300;400;600&display=swap" rel="stylesheet"/>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -23,24 +24,27 @@
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  const VOTE_KEY = "user_vote_data";
+  const VOTE_KEY = "voted_v3_data"; // Nova chave de storage
+  let currentConfig = null;
   let hasVoted = false;
   let votingOpen = false;
 
-  // Lógica de Sessão
-  function getMyVote() {
-    const data = localStorage.getItem(VOTE_KEY);
-    return data ? JSON.parse(data) : null;
+  // LÓGICA DE STORAGE COM TIMESTAMP
+  function getVotedData() {
+    const d = localStorage.getItem(VOTE_KEY);
+    return d ? JSON.parse(d) : null;
   }
 
+  /* ── FIREBASE LISTENER ── */
   onValue(ref(db, 'config'), (snap) => {
     const data = snap.val();
     if (!data) return;
+    currentConfig = data;
 
     const lastReset = data.lastReset || 0;
-    const myVote = getMyVote();
+    const myVote = getVotedData();
 
-    // RESET DE SESSÃO: Se houve reset após o meu voto, limpa
+    // SE O RESET FOR MAIS RECENTE QUE O MEU VOTO -> POSSO VOTAR DE NOVO
     if (myVote && myVote.time < lastReset) {
       localStorage.removeItem(VOTE_KEY);
       hasVoted = false;
@@ -49,87 +53,105 @@
     }
 
     votingOpen = data.votingOpen || false;
-    renderUI(data);
+    const currentVotedId = hasVoted ? getVotedData().id : null;
+
+    if (votingOpen) {
+      document.getElementById('closedScreen').style.display = 'none';
+      document.getElementById('votingScreen').style.display = 'block';
+      renderCandidates(data.candidates || [], currentVotedId);
+    } else {
+      document.getElementById('closedScreen').style.display = 'flex';
+      document.getElementById('votingScreen').style.display = 'none';
+    }
+
+    document.getElementById('eventTitle').textContent = data.title || 'Votação';
+    document.body.style.opacity = '1';
   });
 
-  function renderUI(data) {
-    document.getElementById('eventTitle').textContent = data.title || 'VOTAÇÃO';
-    document.getElementById('closedScreen').style.display = votingOpen ? 'none' : 'flex';
-    document.getElementById('votingScreen').style.display = votingOpen ? 'block' : 'none';
-
+  function renderCandidates(candidates, votedId) {
     const grid = document.getElementById('grid');
-    grid.innerHTML = '';
-    
-    (data.candidates || []).forEach(c => {
-      const isMyVote = hasVoted && getMyVote().id === c.id;
-      const card = document.createElement('div');
-      card.className = `card ${isMyVote ? 'selected' : ''} ${hasVoted && !isMyVote ? 'disabled' : ''}`;
-      card.innerHTML = `
-        <div class="photo-wrap">
-          ${c.photo ? `<img src="${c.photo}"/>` : `<div class="placeholder">${c.name[0]}</div>`}
-          ${isMyVote ? '<div class="check">✓</div>' : ''}
+    grid.innerHTML = candidates.map((c, i) => {
+      const isMyVote = votedId === c.id;
+      return `
+        <div class="card ${isMyVote ? 'voted' : ''} ${votedId && !isMyVote ? 'dim' : ''}" style="--delay: ${i*0.05}s">
+          <div class="photo-wrap">
+            ${c.photo ? `<img src="${c.photo}"/>` : `<div class="initial">${c.name[0]}</div>`}
+            ${isMyVote ? '<div class="check">✓</div>' : ''}
+          </div>
+          <div class="card-info">
+            <div class="name">${c.name}</div>
+            <div class="sub">${c.subtitle || ''}</div>
+          </div>
+          ${!votedId ? `<button class="btn-vote" onclick="castVote('${c.id}', '${c.name}')">VOTAR</button>` : ''}
+          ${isMyVote ? `<div class="voted-label">O TEU VOTO</div>` : ''}
         </div>
-        <div class="name">${c.name}</div>
-        <div class="sub">${c.subtitle || ''}</div>
-        ${!hasVoted ? `<button class="btn-vote" onclick="castVote('${c.id}', '${c.name}')">VOTAR</button>` : ''}
       `;
-      grid.appendChild(card);
-    });
+    }).join('');
   }
 
   window.castVote = async function(id, name) {
+    if (hasVoted) return;
     if (!confirm(`Confirmar voto em ${name}?`)) return;
-    
+
     const vRef = ref(db, `votes/${id}`);
     const snap = await get(vRef);
     await set(vRef, (snap.exists() ? snap.val() : 0) + 1);
-    
+
     localStorage.setItem(VOTE_KEY, JSON.stringify({ id, time: Date.now() }));
     location.reload();
   };
 </script>
 
 <style>
-  :root { --accent: #c8a96e; --bg: #06050c; }
-  body { background: var(--bg); color: white; font-family: 'Outfit', sans-serif; margin: 0; }
-  .header { padding: 40px 20px; text-align: center; border-bottom: 1px solid rgba(200,169,110,0.2); }
-  h1 { font-family: 'Cormorant Garamond', serif; font-size: 2.5rem; color: var(--accent); margin: 0; }
+  :root { --bg: #07060a; --surface: #100f14; --accent: #c8a96e; --text: #f0ece4; --muted: #6b6560; --radius: 16px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; opacity: 0; transition: 0.8s; }
   
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; padding: 20px; }
+  /* ELEMENTOS ESTÉTICOS IGUAIS AO ANTERIOR */
+  .grain { position: fixed; inset: 0; pointer-events: none; z-index: 10; opacity: 0.03; background-image: url("data:image/svg+xml,..."); }
+  .glow { position: fixed; width: 60vw; height: 60vw; background: radial-gradient(circle, #c8a96e15, transparent 70%); filter: blur(100px); top: -20vw; right: -20vw; pointer-events: none; }
+
+  header { text-align: center; padding: 60px 20px; border-bottom: 1px solid rgba(200,169,110,0.15); margin-bottom: 40px; }
+  h1 { font-family: 'Cormorant Garamond', serif; font-size: 3.5rem; color: var(--accent); letter-spacing: -1px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; padding: 0 20px 100px; max-width: 1200px; margin: 0 auto; }
   
-  .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 15px; padding: 15px; text-align: center; transition: 0.3s; }
-  .card.selected { border-color: var(--accent); background: rgba(200,169,110,0.1); }
-  .card.disabled { opacity: 0.5; pointer-events: none; }
+  .card { background: #13121a; border: 1px solid #252330; border-radius: var(--radius); padding: 15px; position: relative; animation: cardIn 0.5s var(--delay) both; }
+  @keyframes cardIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: 0; } }
   
-  .photo-wrap { width: 100%; aspect-ratio: 1/1; border-radius: 10px; overflow: hidden; margin-bottom: 10px; position: relative; }
+  .card.voted { border-color: var(--accent); box-shadow: 0 0 20px rgba(200,169,110,0.1); }
+  .card.dim { opacity: 0.4; }
+
+  .photo-wrap { width: 100%; aspect-ratio: 4/5; border-radius: 10px; overflow: hidden; margin-bottom: 12px; background: #000; position: relative; }
   .photo-wrap img { width: 100%; height: 100%; object-fit: cover; }
-  .placeholder { width: 100%; height: 100%; background: #1a1a1a; display: flex; align-items: center; justify-content: center; font-size: 3rem; color: var(--accent); }
-  
-  .check { position: absolute; top: 5px; right: 5px; background: var(--accent); color: black; width: 25px; height: 25px; border-radius: 50%; font-weight: bold; }
-  
-  .name { font-weight: 600; font-size: 1.1rem; }
-  .sub { font-size: 0.8rem; color: var(--accent); opacity: 0.8; margin-bottom: 10px; }
-  
-  .btn-vote { background: transparent; border: 1px solid var(--accent); color: var(--accent); width: 100%; padding: 8px; border-radius: 5px; cursor: pointer; font-weight: 600; }
+  .initial { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 3rem; color: var(--accent); font-family: 'Cormorant Garamond'; }
+  .check { position: absolute; top: 8px; right: 8px; background: var(--accent); color: black; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+
+  .name { font-family: 'Cormorant Garamond'; font-size: 1.3rem; font-weight: 600; }
+  .sub { font-size: 0.8rem; color: var(--accent); opacity: 0.8; margin-top: 3px; }
+
+  .btn-vote { width: 100%; margin-top: 15px; padding: 10px; background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.3s; }
   .btn-vote:hover { background: var(--accent); color: black; }
-  
-  #closedScreen { height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  .closed-icon { font-size: 4rem; margin-bottom: 20px; }
+  .voted-label { margin-top: 15px; font-size: 10px; letter-spacing: 1px; color: var(--accent); font-weight: 600; text-align: center; }
+
+  #closedScreen { height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .closed-icon { font-size: 4rem; color: var(--accent); margin-bottom: 20px; }
 </style>
 </head>
 <body>
-  <div class="header">
-    <h1 id="eventTitle">...</h1>
-  </div>
+<div class="glow"></div>
+<header>
+  <h1 id="eventTitle">...</h1>
+</header>
 
-  <div id="closedScreen" style="display:none">
-    <div class="closed-icon">🔒</div>
-    <h2>Votação Encerrada</h2>
-    <p>Aguarde pelo início da próxima ronda.</p>
-  </div>
+<div id="closedScreen" style="display:none">
+  <div class="closed-icon">🔒</div>
+  <h2>VOTAÇÃO ENCERRADA</h2>
+  <p style="opacity: 0.5;">Aguarda pela abertura da próxima ronda.</p>
+</div>
 
-  <div id="votingScreen" style="display:none">
-    <div class="grid" id="grid"></div>
-  </div>
+<div id="votingScreen" style="display:none">
+  <div class="grid" id="grid"></div>
+</div>
 </body>
 </html>
