@@ -1,12 +1,11 @@
-
 <!DOCTYPE html>
 <html lang="pt">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=1920, height=1080"/>
-<title>Broadcast Results — Official</title>
+<title>Ultimate Broadcast — Eurovision Style</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Inter:wght@300;400;700;900&family=Outfit:wght@300;600&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;700;900&family=Syncopate:wght@400;700&family=Lexend:wght@300;600;800&display=swap" rel="stylesheet"/>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -25,331 +24,292 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
 
-// Função de animação de números
-function animateValue(obj, start, end, duration) {
-  let startTimestamp = null;
-  const step = (timestamp) => {
-    if (!startTimestamp) startTimestamp = timestamp;
-    const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-    obj.innerHTML = Math.floor(progress * (end - start) + start).toLocaleString('pt-PT');
-    if (progress < 1) {
-      window.requestAnimationFrame(step);
-    }
-  };
-  window.requestAnimationFrame(step);
+function applyTheme(t) {
+  if (!t) return;
+  const r = document.documentElement;
+  r.style.setProperty('--accent', t.accent || '#c8a96e');
+  r.style.setProperty('--accent2', t.accent2 || '#ecdcab');
+  r.style.setProperty('--bg-base', t.bg || '#06050c');
+  
+  // Criar cor de brilho baseada no accent mas com transparência
+  r.style.setProperty('--glow', `${t.accent}44`);
 }
 
-async function loadResults() {
+async function startReveal() {
   const configSnap = await get(ref(db, 'config'));
   const votesSnap  = await get(ref(db, 'votes'));
   
   const config = configSnap.val() || {};
   const votes  = votesSnap.val() || {};
-  const candidates = config.candidates || [];
+  applyTheme(config.theme);
 
+  const candidates = config.candidates || [];
   const sorted = [...candidates]
     .map(c => ({ ...c, count: votes[c.id] || 0 }))
     .sort((a, b) => b.count - a.count);
 
   const total = sorted.reduce((s, c) => s + c.count, 0);
 
-  document.getElementById('evTitle').textContent = config.title || 'RESULTADOS';
-  document.getElementById('evSub').textContent   = config.subtitle || 'CONTAGEM FINALIZADA';
-  document.getElementById('totalCount').textContent = total.toLocaleString('pt-PT');
+  document.getElementById('evTitle').textContent = config.title || 'GRANDE FINAL';
+  document.getElementById('evSub').textContent   = config.subtitle || 'RESULTADOS OFICIAIS';
 
-  const container = document.getElementById('resultsGrid');
-  container.innerHTML = '';
+  const grid = document.getElementById('resultsGrid');
+  grid.innerHTML = '';
 
+  // Renderizar Sequencial (Efeito de Suspense)
   sorted.forEach((c, i) => {
-    const pct = total ? (c.count / total * 100).toFixed(1) : 0;
     const isWinner = i === 0;
+    const pct = total ? (c.count / total * 100).toFixed(1) : 0;
     
-    const row = document.createElement('div');
-    row.className = `result-card ${isWinner ? 'winner' : ''}`;
-    row.style.setProperty('--delay', `${i * 0.15}s`);
+    const el = document.createElement('div');
+    el.className = `rank-card ${isWinner ? 'winner-card' : ''}`;
+    el.style.setProperty('--delay', `${i * 0.1}s`);
     
-    row.innerHTML = `
-      <div class="rank">#${i + 1}</div>
-      <div class="photo-area">
-        ${c.photo ? `<img src="${c.photo}" />` : `<div class="initials">${c.name.charAt(0)}</div>`}
-        ${isWinner ? '<div class="winner-badge">VENCEDOR</div>' : ''}
+    el.innerHTML = `
+      <div class="card-glass"></div>
+      <div class="rank-number">${i + 1}</div>
+      <div class="photo-box">
+         ${c.photo ? `<img src="${c.photo}" />` : `<div class="initial">${c.name[0]}</div>`}
+         ${isWinner ? '<div class="crown-icon">🏆</div>' : ''}
       </div>
-      <div class="info">
+      <div class="main-info">
         <div class="name">${c.name}</div>
-        <div class="subtitle">${c.subtitle || ''}</div>
+        <div class="sub">${c.subtitle || ''}</div>
       </div>
-      <div class="data-viz">
-        <div class="bar-container">
-          <div class="bar-fill" style="width: 0%" data-pct="${pct}"></div>
+      <div class="stats">
+        <div class="bar-track">
+           <div class="bar-fill" style="width: 0%" data-p="${pct}"></div>
         </div>
-        <div class="numbers">
-          <span class="pct-val">${pct}%</span>
-          <span class="vote-val" data-val="${c.count}">0</span>
+        <div class="vals">
+           <span class="pct-text">${pct}%</span>
+           <span class="count-text">${c.count.toLocaleString('pt-PT')} VOTOS</span>
         </div>
       </div>
     `;
-    container.appendChild(row);
+    grid.appendChild(el);
 
-    // Animar barra e números após entrada
+    // Animar Barras após entrada do card
     setTimeout(() => {
-      row.querySelector('.bar-fill').style.width = pct + '%';
-      animateValue(row.querySelector('.vote-val'), 0, c.count, 1500);
-    }, 600 + (i * 150));
+      el.querySelector('.bar-fill').style.width = pct + '%';
+    }, 1000 + (i * 100));
   });
 }
 
-// Iniciar
-loadResults();
+onValue(ref(db, 'config'), snap => startReveal());
 </script>
 
 <style>
 :root {
-  --bg-deep: #020205;
-  --accent: #d4af37; /* Gold */
-  --accent-bright: #f9e297;
-  --glass: rgba(255, 255, 255, 0.05);
-  --glass-border: rgba(255, 255, 255, 0.12);
-  --text-main: #ffffff;
-  --text-dim: rgba(255, 255, 255, 0.6);
-  --font-display: 'Cinzel', serif;
-  --font-main: 'Outfit', sans-serif;
-  --font-data: 'Inter', sans-serif;
+  --accent: #c8a96e;
+  --accent2: #ecdcab;
+  --bg-base: #06050c;
+  --glow: rgba(200, 169, 110, 0.3);
+  --glass-white: rgba(255, 255, 255, 0.07);
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin:0; padding:0; box-sizing:border-box; }
 
 body {
   width: 1920px; height: 1080px;
-  background-color: var(--bg-deep);
-  color: var(--text-main);
-  font-family: var(--font-main);
+  background: var(--bg-base);
+  color: #fff;
+  font-family: 'Lexend', sans-serif;
   overflow: hidden;
-  background-image: 
-    radial-gradient(circle at 0% 0%, rgba(212, 175, 55, 0.08) 0%, transparent 40%),
-    radial-gradient(circle at 100% 100%, rgba(45, 66, 255, 0.08) 0%, transparent 40%);
-}
-
-/* Background Elements */
-.bg-overlay {
-  position: fixed; inset: 0;
-  background: url('https://www.transparenttextures.com/patterns/carbon-fibre.png');
-  opacity: 0.2; pointer-events: none;
-}
-
-/* Layout */
-.screen {
-  position: relative;
-  z-index: 10;
-  height: 1080px;
   display: flex;
   flex-direction: column;
-  padding: 60px 80px;
 }
 
-/* Header */
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  border-bottom: 2px solid var(--glass-border);
-  padding-bottom: 30px;
-  margin-bottom: 40px;
+/* --- CINEMATIC BACKGROUND --- */
+#stage {
+  position: fixed; inset: 0; z-index: -1;
+  background: radial-gradient(circle at 50% -20%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 70%);
 }
 
-.title-group h1 {
-  font-family: var(--font-display);
-  font-size: 64px;
-  letter-spacing: 4px;
-  text-transform: uppercase;
-  background: linear-gradient(to bottom, #fff, #ccc);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+.light-beam {
+  position: absolute; top: -100px; width: 400px; height: 1200px;
+  background: linear-gradient(to bottom, var(--glow), transparent);
+  filter: blur(80px); transform-origin: top center;
+  animation: beam-swing 10s ease-in-out infinite alternate;
+}
+.beam-1 { left: 20%; animation-delay: 0s; }
+.beam-2 { right: 20%; animation-delay: -5s; }
+
+@keyframes beam-swing {
+  from { transform: rotate(-15deg); opacity: 0.3; }
+  to { transform: rotate(15deg); opacity: 0.6; }
 }
 
-.title-group p {
-  font-size: 20px;
-  color: var(--accent);
-  letter-spacing: 8px;
-  font-weight: 300;
-  text-transform: uppercase;
-}
-
-.official-badge {
-  background: rgba(212, 175, 55, 0.15);
-  border: 1px solid var(--accent);
-  padding: 10px 25px;
-  border-radius: 4px;
-  text-align: right;
-}
-
-.official-badge span {
-  display: block;
-  font-size: 12px;
-  color: var(--accent);
-  letter-spacing: 2px;
-}
-
-.official-badge strong {
-  font-size: 28px;
-  font-family: var(--font-data);
-}
-
-/* Results Grid */
-.results-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
-  flex: 1;
-}
-
-/* Cards */
-.result-card {
-  background: var(--glass);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--glass-border);
-  height: 140px;
+/* --- HEADER (EUROVISION STYLE) --- */
+header {
+  height: 200px;
   display: flex;
   align-items: center;
-  padding: 0 30px;
-  position: relative;
-  opacity: 0;
-  transform: translateX(-50px);
-  animation: cardEntry 0.8s var(--delay) forwards cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0 80px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
 }
 
-@keyframes cardEntry {
-  to { opacity: 1; transform: translateX(0); }
-}
-
-.result-card.winner {
-  background: linear-gradient(90deg, rgba(212, 175, 55, 0.15) 0%, var(--glass) 100%);
-  border-left: 5px solid var(--accent);
-  height: 180px;
-  grid-column: span 2;
-  margin-bottom: 10px;
-}
-
-.rank {
-  font-family: var(--font-data);
-  font-weight: 900;
-  font-size: 24px;
-  color: var(--text-dim);
-  width: 60px;
-}
-
-.winner .rank { font-size: 40px; color: var(--accent); }
-
-.photo-area {
-  width: 80px; height: 80px;
-  margin-right: 25px;
-  position: relative;
-}
-
-.winner .photo-area { width: 120px; height: 120px; }
-
-.photo-area img, .initials {
-  width: 100%; height: 100%;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 2px solid var(--glass-border);
-}
-
-.winner img { border-color: var(--accent); box-shadow: 0 0 30px rgba(212,175,55,0.3); }
-
-.winner-badge {
-  position: absolute;
-  bottom: -10px; left: 50%;
-  transform: translateX(-50%);
-  background: var(--accent);
-  color: #000;
-  font-weight: 900;
-  font-size: 10px;
-  padding: 4px 10px;
-  border-radius: 20px;
-}
-
-.info { flex: 0 0 300px; }
-.name { font-size: 28px; font-weight: 700; }
-.winner .name { font-size: 42px; }
-.subtitle { font-size: 16px; color: var(--text-dim); margin-top: 5px; }
-
-.data-viz { flex: 1; margin-left: 40px; }
-
-.bar-container {
-  height: 8px;
-  background: rgba(255,255,255,0.05);
-  border-radius: 10px;
-  overflow: hidden;
-  margin-bottom: 15px;
-}
-
-.bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
-  transition: width 1.5s ease-out;
-}
-
-.numbers {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-family: var(--font-data);
-}
-
-.pct-val { font-size: 32px; font-weight: 900; }
-.winner .pct-val { font-size: 48px; color: var(--accent); }
-.vote-val { font-size: 18px; color: var(--text-dim); }
-
-/* Footer */
-.footer {
-  margin-top: 40px;
-  display: flex;
-  justify-content: center;
-  gap: 50px;
-  color: var(--text-dim);
-  font-size: 14px;
-  letter-spacing: 2px;
+.event-info h1 {
+  font-family: 'Syncopate', sans-serif;
+  font-size: 60px;
+  font-weight: 700;
+  letter-spacing: -2px;
   text-transform: uppercase;
+  background: linear-gradient(45deg, #fff 30%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 20px var(--glow));
 }
 
-.footer-item { display: flex; align-items: center; gap: 10px; }
-.footer-item::before { content: '◆'; color: var(--accent); }
+.event-info p {
+  font-size: 24px;
+  color: var(--accent);
+  letter-spacing: 12px;
+  text-transform: uppercase;
+  font-weight: 300;
+}
 
+/* --- RESULTS GRID --- */
+.results-grid {
+  flex: 1;
+  padding: 20px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rank-card {
+  height: 90px;
+  display: flex;
+  align-items: center;
+  position: relative;
+  border-radius: 8px;
+  padding: 0 30px;
+  opacity: 0;
+  transform: translateX(-100px) skewX(-10deg);
+  animation: card-in 0.8s var(--delay) forwards cubic-bezier(0.2, 1, 0.3, 1);
+}
+
+@keyframes card-in {
+  to { opacity: 1; transform: translateX(0) skewX(0deg); }
+}
+
+.card-glass {
+  position: absolute; inset: 0;
+  background: var(--glass-white);
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(255,255,255,0.1);
+  z-index: -1;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.card-glass::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  transform: translateX(-100%); animation: shimmer 4s infinite;
+}
+
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+
+/* --- THE WINNER CARD --- */
+.winner-card {
+  height: 180px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 30%, transparent), var(--glass-white));
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 50px var(--glow);
+  margin-bottom: 20px;
+}
+
+.winner-card .rank-number { font-size: 80px; color: var(--accent); }
+.winner-card .name { font-size: 54px; }
+.winner-card .photo-box { width: 140px; height: 140px; }
+
+/* --- COMPONENTS --- */
+.rank-number {
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 900;
+  font-size: 32px;
+  width: 80px;
+  font-style: italic;
+}
+
+.photo-box {
+  width: 70px; height: 70px;
+  border-radius: 4px;
+  margin-right: 30px;
+  background: #111;
+  border: 1px solid var(--accent);
+  position: relative;
+}
+
+.photo-box img { width: 100%; height: 100%; object-fit: cover; }
+.initial { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; }
+
+.crown-icon {
+  position: absolute; top: -15px; left: -15px;
+  font-size: 30px; filter: drop-shadow(0 0 10px #fff);
+}
+
+.main-info { flex: 0 0 450px; }
+.name { font-size: 28px; font-weight: 800; text-transform: uppercase; line-height: 1; }
+.sub { color: var(--accent); font-size: 14px; margin-top: 5px; opacity: 0.8; }
+
+.stats { flex: 1; margin-left: 40px; }
+.bar-track {
+  height: 12px; background: rgba(0,0,0,0.3);
+  border-radius: 20px; overflow: hidden; margin-bottom: 8px;
+}
+.bar-fill {
+  height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+  box-shadow: 0 0 15px var(--accent);
+  transition: width 2s cubic-bezier(0.1, 1, 0.3, 1);
+}
+
+.vals { display: flex; justify-content: space-between; align-items: baseline; }
+.pct-text { font-family: 'Montserrat'; font-weight: 900; font-size: 32px; }
+.count-text { font-size: 12px; opacity: 0.6; letter-spacing: 2px; }
+
+/* --- TICKER --- */
+footer {
+  height: 60px; background: rgba(0,0,0,0.9);
+  display: flex; align-items: center; padding: 0 80px;
+  font-family: 'Syncopate'; font-size: 14px;
+}
+.ticker { white-space: nowrap; overflow: hidden; flex: 1; color: var(--accent); }
 </style>
 </head>
 <body>
-  <div class="bg-overlay"></div>
 
-  <div class="screen">
-    <header class="header">
-      <div class="title-group">
-        <p id="evSub">Apuramento Final</p>
-        <h1 id="evTitle">CARREGANDO...</h1>
-      </div>
-      <div class="official-badge">
-        <span>VOTOS TOTAIS</span>
-        <strong id="totalCount">0</strong>
-      </div>
-    </header>
-
-    <div class="results-grid" id="resultsGrid">
-      <!-- Gerado via JS -->
-    </div>
-
-    <footer class="footer">
-      <div class="footer-item">Resultados Oficiais Auditados</div>
-      <div class="footer-item">Sistema de Votação Certificado</div>
-      <div class="footer-item" id="liveTime">00:00:00</div>
-    </footer>
+  <div id="stage">
+    <div class="light-beam beam-1"></div>
+    <div class="light-beam beam-2"></div>
   </div>
 
-<script>
-  function updateTime() {
-    const now = new Date();
-    document.getElementById('liveTime').textContent = now.toLocaleTimeString('pt-PT');
-  }
-  setInterval(updateTime, 1000);
-  updateTime();
-</script>
+  <header>
+    <div class="event-info">
+      <p id="evSub">A AGUARDAR...</p>
+      <h1 id="evTitle">CARREGANDO DADOS</h1>
+    </div>
+  </header>
+
+  <main class="results-grid" id="resultsGrid">
+    <!-- JS POPULATES -->
+  </main>
+
+  <footer>
+    <div class="ticker">
+      ● RESULTADOS FINAIS ● CONTAGEM ENCERRADA ● AUDITADO EM TEMPO REAL ● RESULTADOS FINAIS ● CONTAGEM ENCERRADA
+    </div>
+    <div id="clock" style="font-weight: 700; color: #fff;">00:00:00</div>
+  </footer>
+
+  <script>
+    function updateClock() {
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-PT');
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+  </script>
+
 </body>
 </html>
