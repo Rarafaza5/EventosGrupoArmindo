@@ -28,13 +28,16 @@
     const db = getDatabase(app);
 
     let config = {};
-    let candidates = [];
-    let votes = {};
-    let editingIndex = -1;
+    let categories = []; // [{id, name, candidates:[]}]
+    let votes = {}; // {cat_id: {cand_id: count}}
+    let editingCatIndex = -1;
+    let editingCandIndex = -1;
+    let activeCatForCandidates = null; // category id currently open in candidate editor
 
     const ADMIN_PASS = "admin1234";
     let authed = false;
 
+    // ── AUTH ──
     function checkAuth() {
       const stored = sessionStorage.getItem('ga_admin_auth');
       if (stored === ADMIN_PASS) { authed = true; showApp(); return; }
@@ -70,18 +73,35 @@
     function loadConfig() {
       onValue(ref(db, 'config'), (snap) => {
         config = snap.val() || {};
-        candidates = config.candidates || [];
+        // Support both legacy (candidates[]) and new (categories[])
+        if (config.categories && config.categories.length > 0) {
+          categories = config.categories;
+        } else if (config.candidates && config.candidates.length > 0) {
+          // Migrate legacy: wrap in single category
+          categories = [{ id: 'cat_default', name: 'Votação', candidates: config.candidates }];
+        } else {
+          categories = config.categories || [];
+        }
         populateForm();
-        renderCandidateList();
+        renderCategoryList();
         updateStatusDisplay(config.votingOpen || false, config.sessionId || null);
-        document.getElementById('candidateCount').textContent = candidates.length + ' candidatos';
+        const total = categories.reduce((s, c) => s + (c.candidates || []).length, 0);
+        document.getElementById('candidateCount').textContent = total + ' candidatos em ' + categories.length + ' categori' + (categories.length === 1 ? 'a' : 'as');
+        populateOverlayForm(config.overlay);
+        populateBroadcastForm(config.broadcast);
       });
       onValue(ref(db, 'sessions'), (snap) => {
         const sessions = snap.val() || {};
         const sid = config.sessionId || 'default';
-        votes = (sessions[sid] && sessions[sid].votes) || {};
-        updateVoteCounts(votes);
-        renderResults(votes);
+        const sv = sessions[sid] || {};
+        // votes: {cat_id: {cand_id: count}}
+        votes = {};
+        categories.forEach(cat => {
+          const key = 'cat_' + cat.id;
+          votes[cat.id] = (sv[key]) || {};
+        });
+        updateVoteCounts();
+        renderResults();
       });
     }
 
@@ -129,13 +149,18 @@
       updateStatusDisplay(isOpen, config.sessionId || null);
     }
 
-    function updateVoteCounts(v) {
-      const total = Object.values(v).reduce((a, b) => a + b, 0);
-      document.getElementById('totalVotes').textContent = total;
-      candidates.forEach(c => {
-        const badge = document.querySelector(`.c-votes-badge[data-id="${c.id}"]`);
-        if (badge) badge.textContent = (v[c.id] || 0) + ' votos';
+    function updateVoteCounts() {
+      let total = 0;
+      categories.forEach(cat => {
+        const cv = votes[cat.id] || {};
+        const catTotal = Object.values(cv).reduce((a, b) => a + b, 0);
+        total += catTotal;
+        (cat.candidates || []).forEach(c => {
+          const badge = document.querySelector(`.c-votes-badge[data-id="${c.id}"][data-cat="${cat.id}"]`);
+          if (badge) badge.textContent = (cv[c.id] || 0) + ' votos';
+        });
       });
+      document.getElementById('totalVotes').textContent = total;
     }
 
     window.toggleVoting = async function () {
@@ -160,7 +185,7 @@
     window.resetVotes = async function () {
       if (!confirm('Apagar todos os votos da sessão atual?\nEsta ação é irreversível.')) return;
       const sid = config.sessionId || 'default';
-      await set(ref(db, `sessions/${sid}/votes`), null);
+      await set(ref(db, `sessions/${sid}`), null);
       showToast('✦ Votos apagados');
     };
 
@@ -184,281 +209,357 @@
       showToast('✦ Tema guardado e aplicado');
     };
 
-    /* ── 200 TEMPLATES ── */
+    // ── CATEGORIES ──
+    function renderCategoryList() {
+      const list = document.getElementById('categoryList');
+      list.innerHTML = '';
+      const total = categories.reduce((s, c) => s + (c.candidates || []).length, 0);
+      document.getElementById('candidateCount').textContent = total + ' candidatos em ' + categories.length + ' categori' + (categories.length === 1 ? 'a' : 'as');
+
+      if (categories.length === 0) {
+        list.innerHTML = '<div class="empty-list">Nenhuma categoria. Cria uma abaixo!</div>';
+        return;
+      }
+
+      categories.forEach((cat, ci) => {
+        const catVotes = Object.values(votes[cat.id] || {}).reduce((a, b) => a + b, 0);
+        const item = document.createElement('div');
+        item.className = 'cat-item';
+        item.innerHTML = `
+          <div class="cat-header">
+            <div class="cat-drag-handle">⠿</div>
+            <div class="cat-info">
+              <div class="cat-name">${cat.name}</div>
+              <div class="cat-meta">${(cat.candidates || []).length} candidatos · ${catVotes} votos</div>
+            </div>
+            <div class="cat-header-actions">
+              <button class="obs-btn" title="Mostrar no OBS" onclick="setObsCategory('${cat.id}', '${cat.name.replace(/'/g, "\\'")}')">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                OBS
+              </button>
+              <button class="btn-icon" title="Editar categoria" onclick="editCategory(${ci})">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </button>
+              <button class="btn-icon danger" title="Remover categoria" onclick="removeCategory(${ci})">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="cat-candidates" id="catCandidates_${cat.id}">
+            ${renderCandidatesInline(cat)}
+          </div>
+          <div class="cat-footer">
+            <button class="btn btn-secondary btn-sm" onclick="openAddCandidate('${cat.id}')">+ Candidato</button>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+
+      // Mark active OBS category
+      refreshObsHighlight();
+    }
+
+    function renderCandidatesInline(cat) {
+      if (!cat.candidates || cat.candidates.length === 0) {
+        return '<div class="empty-cands">Sem candidatos nesta categoria.</div>';
+      }
+      return cat.candidates.map((c, i) => `
+        <div class="cand-row">
+          <div class="c-num">${String(i + 1).padStart(2, '0')}</div>
+          <div class="c-thumb">${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="c-initial">${c.name.charAt(0)}</div>`}</div>
+          <div class="c-info">
+            <div class="c-name">${c.name}</div>
+            ${c.subtitle ? `<div class="c-sub">${c.subtitle}</div>` : ''}
+          </div>
+          <span class="c-votes-badge" data-id="${c.id}" data-cat="${cat.id}">${(votes[cat.id]?.[c.id] || 0)} votos</span>
+          <div class="c-actions">
+            <button class="btn-icon" title="Editar" onclick="editCandidate('${cat.id}',${i})">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="btn-icon danger" title="Remover" onclick="removeCandidate('${cat.id}',${i})">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderResults() {
+      const area = document.getElementById('resultsArea');
+      if (categories.length === 0) { area.innerHTML = '<div class="empty-list">Sem categorias.</div>'; return; }
+      area.innerHTML = '';
+      categories.forEach(cat => {
+        const cv = votes[cat.id] || {};
+        const catTotal = Object.values(cv).reduce((a, b) => a + b, 0);
+        const sorted = [...(cat.candidates || [])].map(c => ({ ...c, count: cv[c.id] || 0 })).sort((a, b) => b.count - a.count);
+        const section = document.createElement('div');
+        section.className = 'results-cat-section';
+        section.innerHTML = `<div class="results-cat-title">${cat.name} <span>${catTotal} votos</span></div>`;
+        sorted.forEach((c, i) => {
+          const pct = catTotal ? (c.count / catTotal * 100).toFixed(1) : 0;
+          const row = document.createElement('div');
+          row.className = 'result-row' + (i === 0 && c.count > 0 ? ' result-row--leader' : '');
+          row.innerHTML = `
+            <div class="result-rank">${i === 0 && c.count > 0 ? '🏆' : '#' + (i + 1)}</div>
+            <div class="result-thumb">${c.photo ? `<img src="${c.photo}"/>` : `<div class="c-initial" style="font-size:0.9rem">${c.name.charAt(0)}</div>`}</div>
+            <div class="result-info">
+              <div class="result-name">${c.name}</div>
+              <div class="result-bar-wrap"><div class="result-bar" style="width:${pct}%"></div></div>
+            </div>
+            <div class="result-count">${c.count} <span>${pct}%</span></div>
+          `;
+          section.appendChild(row);
+        });
+        area.appendChild(section);
+      });
+    }
+
+    // ── OBS CATEGORY ──
+    window.setObsCategory = async function (catId, catName) {
+      await set(ref(db, 'config/activeCategory'), catId);
+      await set(ref(db, 'config/broadcast/catId'), catId);
+      config.activeCategory = catId;
+      refreshObsHighlight();
+      refreshBroadcastCatSelect(catId);
+      showToast(`✦ OBS → "${catName}"`);
+    };
+
+    function refreshObsHighlight() {
+      const active = config.overlay?.catId || config.activeCategory;
+      document.querySelectorAll('.obs-btn').forEach(btn => btn.classList.remove('obs-btn--active'));
+      if (active) {
+        document.querySelectorAll('.obs-btn').forEach(btn => {
+          const onclick = btn.getAttribute('onclick') || '';
+          if (onclick.includes(`'${active}'`)) btn.classList.add('obs-btn--active');
+        });
+      }
+    }
+
+    // ── OVERLAY CONTROLS ──
+    window.setOverlayProp = async function (prop, value) {
+      await set(ref(db, 'config/overlay/' + prop), value);
+      if (prop === 'visible' || prop === 'mode') refreshOverlayUI();
+      showToast('✦ Overlay actualizado');
+    };
+
+    window.saveOverlay = async function () {
+      const overlay = {
+        visible: document.getElementById('ov_visible').checked,
+        mode: document.getElementById('ov_mode').value,
+        position: document.getElementById('ov_position').value,
+        catId: document.getElementById('ov_catId').value || (categories[0]?.id || 'default'),
+        maxRows: parseInt(document.getElementById('ov_maxRows').value) || 10,
+        showPhotos: document.getElementById('ov_showPhotos').checked,
+        showBars: document.getElementById('ov_showBars').checked,
+        showTotal: document.getElementById('ov_showTotal').checked,
+        showCatName: document.getElementById('ov_showCatName').checked,
+        showClock: document.getElementById('ov_showClock').checked,
+        showStatus: document.getElementById('ov_showStatus').checked,
+        customTitle: document.getElementById('ov_customTitle').value.trim(),
+      };
+      await set(ref(db, 'config/overlay'), overlay);
+      config.overlay = overlay;
+      refreshOverlayUI();
+      showToast('✦ Overlay guardado e aplicado!');
+    };
+
+    function populateOverlayForm(overlay) {
+      const o = overlay || {};
+      setCheck('ov_visible', o.visible !== false);
+      const mode = o.mode || 'leaderboard';
+      setSelect('ov_mode', mode);
+      document.querySelectorAll('.ov-mode-btn').forEach(b => b.classList.remove('active'));
+      const modeIdx = { leaderboard: 0, leader: 1, ticker: 2, hidden: 3 }[mode] ?? 0;
+      document.querySelectorAll('.ov-mode-btn')[modeIdx]?.classList.add('active');
+
+      const pos = o.position || 'left';
+      setSelect('ov_position', pos);
+      document.querySelectorAll('.ov-pos-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.ov-pos-btn')[pos === 'right' ? 1 : 0]?.classList.add('active');
+
+      // Populate category select
+      const catSel = document.getElementById('ov_catId');
+      if (catSel) {
+        catSel.innerHTML = categories.map(c => `<option value="${c.id}"${c.id === (o.catId || categories[0]?.id) ? ' selected' : ''}>${c.name}</option>`).join('');
+      }
+      setVal('ov_maxRows', o.maxRows || 10);
+      setCheck('ov_showPhotos', o.showPhotos !== false);
+      setCheck('ov_showBars', o.showBars !== false);
+      setCheck('ov_showTotal', o.showTotal !== false);
+      setCheck('ov_showCatName', o.showCatName !== false);
+      setCheck('ov_showClock', o.showClock !== false);
+      setCheck('ov_showStatus', o.showStatus !== false);
+      setVal('ov_customTitle', o.customTitle || '');
+      refreshOverlayUI();
+    }
+
+    function setCheck(id, val) { const el = document.getElementById(id); if (el) el.checked = val; }
+    function setSelect(id, val) { const el = document.getElementById(id); if (el) el.value = val; }
+    function setVal(id, val) { const el = document.getElementById(id); if (el) el.value = val; }
+
+    function refreshOverlayUI() {
+      const visible = document.getElementById('ov_visible')?.checked;
+      const mode = document.getElementById('ov_mode')?.value;
+      const badge = document.getElementById('ovBadge');
+      if (badge) {
+        badge.textContent = !visible ? 'OCULTO' : mode === 'hidden' ? 'OCULTO' : 'VISÍVEL';
+        badge.className = 'status-badge ' + (!visible || mode === 'hidden' ? 'closed' : 'open');
+      }
+      // Hide maxRows for non-leaderboard
+      const maxRowsRow = document.getElementById('ov_maxRows_row');
+      if (maxRowsRow) maxRowsRow.style.display = (mode === 'leaderboard') ? '' : 'none';
+    }
+
+    // ── CATEGORY CRUD ──
+    window.openAddCategory = function () {
+      editingCatIndex = -1;
+      document.getElementById('catModalTitle').textContent = 'Nova Categoria';
+      document.getElementById('cat_name').value = '';
+      openModal('categoryModal');
+    };
+
+    window.editCategory = function (i) {
+      editingCatIndex = i;
+      document.getElementById('catModalTitle').textContent = 'Editar Categoria';
+      document.getElementById('cat_name').value = categories[i].name;
+      openModal('categoryModal');
+    };
+
+    window.saveCategory = async function () {
+      const name = document.getElementById('cat_name').value.trim();
+      if (!name) { document.getElementById('cat_name').focus(); return; }
+      if (editingCatIndex >= 0) {
+        categories[editingCatIndex].name = name;
+      } else {
+        categories.push({ id: 'cat_' + Date.now(), name, candidates: [] });
+      }
+      await set(ref(db, 'config/categories'), categories);
+      closeModal('categoryModal');
+      showToast('✦ Categoria guardada');
+    };
+
+    window.removeCategory = async function (i) {
+      if (!confirm(`Remover a categoria "${categories[i].name}" e todos os seus candidatos?\nEsta ação é irreversível.`)) return;
+      categories.splice(i, 1);
+      await set(ref(db, 'config/categories'), categories);
+      showToast('✦ Categoria removida');
+    };
+
+    // ── CANDIDATE CRUD ──
+    window.openAddCandidate = function (catId) {
+      activeCatForCandidates = catId;
+      editingCandIndex = -1;
+      document.getElementById('candidateModalTitle').textContent = 'Adicionar Candidato';
+      document.getElementById('c_name').value = '';
+      document.getElementById('c_subtitle').value = '';
+      document.getElementById('c_description').value = '';
+      document.getElementById('c_photoB64').value = '';
+      const preview = document.getElementById('c_photoPreview');
+      preview.style.display = 'none'; preview.src = '';
+      openModal('candidateModal');
+    };
+
+    window.editCandidate = function (catId, i) {
+      activeCatForCandidates = catId;
+      editingCandIndex = i;
+      const cat = categories.find(c => c.id === catId);
+      if (!cat) return;
+      const c = cat.candidates[i];
+      document.getElementById('candidateModalTitle').textContent = 'Editar Candidato';
+      document.getElementById('c_name').value = c.name || '';
+      document.getElementById('c_subtitle').value = c.subtitle || '';
+      document.getElementById('c_description').value = c.description || '';
+      document.getElementById('c_photoB64').value = c.photo || '';
+      const preview = document.getElementById('c_photoPreview');
+      if (c.photo) { preview.src = c.photo; preview.style.display = 'block'; }
+      else { preview.style.display = 'none'; preview.src = ''; }
+      openModal('candidateModal');
+    };
+
+    window.removeCandidate = async function (catId, i) {
+      if (!confirm('Remover este candidato?')) return;
+      const cat = categories.find(c => c.id === catId);
+      if (!cat) return;
+      cat.candidates.splice(i, 1);
+      await set(ref(db, 'config/categories'), categories);
+      showToast('✦ Candidato removido');
+    };
+
+    window.saveCandidate = async function () {
+      const name = document.getElementById('c_name').value.trim();
+      if (!name) { document.getElementById('c_name').focus(); return; }
+      const cat = categories.find(c => c.id === activeCatForCandidates);
+      if (!cat) return;
+      if (!cat.candidates) cat.candidates = [];
+      const c = {
+        id: editingCandIndex >= 0 ? cat.candidates[editingCandIndex].id : 'c_' + Date.now(),
+        name,
+        subtitle: document.getElementById('c_subtitle').value.trim(),
+        description: document.getElementById('c_description').value.trim(),
+        photo: document.getElementById('c_photoB64').value || '',
+      };
+      if (editingCandIndex >= 0) { cat.candidates[editingCandIndex] = c; }
+      else { cat.candidates.push(c); }
+      await set(ref(db, 'config/categories'), categories);
+      closeModal('candidateModal');
+      showToast('✦ Candidato guardado');
+    };
+
+    window.handlePhotoUpload = function (input) {
+      const file = input.files[0]; if (!file) return;
+      if (file.size > 600000) { alert('Imagem demasiado grande. Máx. 500KB.'); return; }
+      const reader = new FileReader();
+      reader.onload = e => {
+        const b64 = e.target.result;
+        document.getElementById('c_photoB64').value = b64;
+        const preview = document.getElementById('c_photoPreview');
+        preview.src = b64; preview.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+    };
+
+    // ── TEMPLATES ──
     const TEMPLATES = [
-      // ── MÚSICA ──
       { cat: 'Música', icon: '🎵', name: 'Festival da Canção', title: 'Festival da Canção', subtitle: 'Qual é a melhor música?', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
       { cat: 'Música', icon: '🎤', name: 'Eurovisão', title: 'Eurovision Song Contest', subtitle: 'Vote for your favourite!', accent: '#e8c400', accent2: '#ffe066', bg: '#04021a', surface: '#0a0830', text: '#f0eeff', cardBg: '#0c0a2e' },
       { cat: 'Música', icon: '🏆', name: 'MTV Awards', title: 'MTV Music Awards', subtitle: 'Best Music Video', accent: '#ff0050', accent2: '#ff80a0', bg: '#0a0000', surface: '#150005', text: '#ffe8ee', cardBg: '#120004' },
       { cat: 'Música', icon: '🎸', name: 'Rock Fest', title: 'Rock Festival', subtitle: 'Vote no teu artista favorito', accent: '#ff4400', accent2: '#ff8866', bg: '#080300', surface: '#120500', text: '#fff3ee', cardBg: '#0f0400' },
       { cat: 'Música', icon: '🎶', name: 'Festival Verão', title: 'Festival de Verão', subtitle: 'O público escolhe!', accent: '#00d46a', accent2: '#69f0ae', bg: '#00120a', surface: '#001a10', text: '#e8fff2', cardBg: '#001510' },
-      { cat: 'Música', icon: '🎷', name: 'Jazz Gala', title: 'Jazz Awards', subtitle: 'Best Performance of the Year', accent: '#c4973a', accent2: '#e8c870', bg: '#08050a', surface: '#100d15', text: '#f5ead5', cardBg: '#0d0b12' },
-      { cat: 'Música', icon: '🎻', name: 'Música Clássica', title: 'Gala Clássica', subtitle: 'O melhor da música clássica', accent: '#c8a86e', accent2: '#e8d5a3', bg: '#05040a', surface: '#0c0b14', text: '#f2ede0', cardBg: '#090815' },
-      { cat: 'Música', icon: '🥁', name: 'Hip Hop Awards', title: 'Hip Hop Awards', subtitle: 'Melhor Álbum do Ano', accent: '#ff6b00', accent2: '#ffaa55', bg: '#050201', surface: '#0f0602', text: '#fff8f0', cardBg: '#0a0401' },
-      { cat: 'Música', icon: '💿', name: 'Pop Charts', title: 'Pop Charts 2025', subtitle: 'A música mais ouvida', accent: '#e040fb', accent2: '#f8b4ff', bg: '#08001a', surface: '#10004a', text: '#fce8ff', cardBg: '#0c0030' },
-      { cat: 'Música', icon: '🎧', name: 'DJ Awards', title: 'DJ of the Year', subtitle: 'Vote no melhor DJ', accent: '#00e5ff', accent2: '#80f4ff', bg: '#001015', surface: '#00151c', text: '#e0faff', cardBg: '#001219' },
-      { cat: 'Música', icon: '🌟', name: 'Melhor Álbum', title: 'Álbum do Ano', subtitle: 'Qual foi o melhor álbum?', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#0f0a00', text: '#fffbe0', cardBg: '#0a0700' },
-      { cat: 'Música', icon: '🎼', name: 'Melhor Letra', title: 'Melhor Letra', subtitle: 'A canção com mais alma', accent: '#a78bfa', accent2: '#d4bbff', bg: '#060010', surface: '#0d0020', text: '#ede8ff', cardBg: '#09001a' },
-      { cat: 'Música', icon: '🎹', name: 'Piano Contest', title: 'Piano Grand Prix', subtitle: 'Vote no melhor pianista', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#03020a', surface: '#07060f', text: '#f5f0e8', cardBg: '#06050e' },
-      { cat: 'Música', icon: '🎺', name: 'Latin Music', title: 'Latin Music Awards', subtitle: 'El público decide', accent: '#ff6b35', accent2: '#ffaa80', bg: '#0a0200', surface: '#160400', text: '#ffe8d5', cardBg: '#120300' },
-      { cat: 'Música', icon: '🎵', name: 'Karaoke King', title: 'Karaoke Championship', subtitle: 'Quem canta melhor?', accent: '#ff79c6', accent2: '#ffb3e0', bg: '#0d0014', surface: '#170020', text: '#ffe8f5', cardBg: '#120018' },
-      // ── CINEMA & TV ──
       { cat: 'Cinema & TV', icon: '🏆', name: 'Óscares', title: 'Cerimónia dos Óscares', subtitle: 'A Academia Escolhe', accent: '#c9a84c', accent2: '#e8d5a3', bg: '#0a0600', surface: '#140e00', text: '#f5f0e8', cardBg: '#160f00' },
       { cat: 'Cinema & TV', icon: '🎬', name: 'Festival de Cinema', title: 'Festival de Cinema', subtitle: 'Palma de Ouro — Voto do Público', accent: '#ffd700', accent2: '#ffe680', bg: '#0a0800', surface: '#151000', text: '#fffce0', cardBg: '#100c00' },
       { cat: 'Cinema & TV', icon: '📺', name: 'Globos de Ouro', title: 'Globos de Ouro', subtitle: 'Melhor Série do Ano', accent: '#ffd700', accent2: '#fff0a0', bg: '#080600', surface: '#120e00', text: '#fffce5', cardBg: '#0e0a00' },
-      { cat: 'Cinema & TV', icon: '🎭', name: 'BAFTA', title: 'BAFTA Awards', subtitle: 'Best British Film', accent: '#e8c870', accent2: '#f5e0a0', bg: '#06050f', surface: '#0c0a1a', text: '#f0ebe0', cardBg: '#0a091c' },
       { cat: 'Cinema & TV', icon: '🌟', name: 'Emmy Awards', title: 'Emmy Awards', subtitle: 'Best Drama Series', accent: '#c4973a', accent2: '#e8d5a3', bg: '#07060e', surface: '#0e0c1c', text: '#ede9e0', cardBg: '#0d0b1d' },
-      { cat: 'Cinema & TV', icon: '🎥', name: 'Melhor Realizador', title: 'Melhor Realizador', subtitle: 'O público escolhe o realizador do ano', accent: '#ff9500', accent2: '#ffcc70', bg: '#0a0400', surface: '#150800', text: '#fff5e0', cardBg: '#120600' },
-      { cat: 'Cinema & TV', icon: '⭐', name: 'Melhor Ator', title: 'Melhor Ator / Atriz', subtitle: 'O papel que ficou na memória', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#040304', surface: '#0a0a0a', text: '#f5f5f0', cardBg: '#0d0d0d' },
-      { cat: 'Cinema & TV', icon: '🎞️', name: 'Cannes', title: 'Festival de Cannes', subtitle: 'Prix du Jury — Vote du Public', accent: '#e8b800', accent2: '#ffe066', bg: '#030200', surface: '#090700', text: '#fffce5', cardBg: '#070500' },
-      { cat: 'Cinema & TV', icon: '📡', name: 'Reality Show', title: 'Reality Show', subtitle: 'Quem sai? O público decide!', accent: '#ff3d71', accent2: '#ff90b0', bg: '#0a0008', surface: '#160010', text: '#ffe8f2', cardBg: '#120010' },
-      { cat: 'Cinema & TV', icon: '🎮', name: 'Game Awards', title: 'The Game Awards', subtitle: 'Game of the Year', accent: '#00e676', accent2: '#69f0ae', bg: '#001a08', surface: '#002510', text: '#e8fff2', cardBg: '#001e0c' },
-      { cat: 'Cinema & TV', icon: '🎬', name: 'Sundance', title: 'Sundance Film Festival', subtitle: 'Audience Award', accent: '#ff6b6b', accent2: '#ffaaaa', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#120000' },
-      { cat: 'Cinema & TV', icon: '📽️', name: 'Animação', title: 'Melhor Filme de Animação', subtitle: 'A animação favorita do público', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#150a00', text: '#fff8e8', cardBg: '#120700' },
-      { cat: 'Cinema & TV', icon: '🎭', name: 'Teatro', title: 'Prémios de Teatro', subtitle: 'Melhor Peça do Ano', accent: '#9c27b0', accent2: '#ce93d8', bg: '#060010', surface: '#0e0020', text: '#f5e8ff', cardBg: '#0a0018' },
-      { cat: 'Cinema & TV', icon: '🎤', name: 'Talk Show', title: 'Melhor Talk Show', subtitle: 'O programa favorito da audiência', accent: '#2196f3', accent2: '#90caf9', bg: '#000a18', surface: '#001520', text: '#e8f4ff', cardBg: '#00121c' },
-      { cat: 'Cinema & TV', icon: '🏅', name: 'Netflix Awards', title: 'Melhores da Plataforma', subtitle: 'Série ou filme favorito', accent: '#e50914', accent2: '#ff6b73', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#120000' },
-      // ── DESPORTO ──
       { cat: 'Desporto', icon: '⚽', name: 'Futebol', title: 'Melhor Jogador', subtitle: 'Craque do Campeonato', accent: '#4caf50', accent2: '#a5d6a7', bg: '#001a04', surface: '#002408', text: '#e8fff2', cardBg: '#001e06' },
       { cat: 'Desporto', icon: '🏆', name: 'Ballon d\'Or', title: 'Ballon d\'Or', subtitle: 'O melhor do mundo', accent: '#ffd700', accent2: '#ffe880', bg: '#0a0800', surface: '#141000', text: '#fffce0', cardBg: '#100c00' },
-      { cat: 'Desporto', icon: '🏀', name: 'NBA MVP', title: 'NBA Most Valuable Player', subtitle: 'Fan Vote', accent: '#c9472f', accent2: '#e87a60', bg: '#0a0200', surface: '#150400', text: '#fff0ee', cardBg: '#120300' },
-      { cat: 'Desporto', icon: '🎾', name: 'Tennis', title: 'Melhor Tenista', subtitle: 'O público vota', accent: '#8bc34a', accent2: '#c5e1a5', bg: '#011000', surface: '#021800', text: '#f0ffe8', cardBg: '#011400' },
-      { cat: 'Desporto', icon: '🏊', name: 'Natação', title: 'Melhor Nadador', subtitle: 'Campeão olímpico — voto popular', accent: '#00bcd4', accent2: '#80deea', bg: '#001820', surface: '#002030', text: '#e0f8ff', cardBg: '#001c28' },
-      { cat: 'Desporto', icon: '🥊', name: 'Boxe', title: 'Luta do Ano', subtitle: 'A luta mais épica', accent: '#ff1744', accent2: '#ff7070', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#120000' },
-      { cat: 'Desporto', icon: '🏎️', name: 'F1', title: 'Driver of the Year', subtitle: 'Formula 1 Fan Vote', accent: '#e53935', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0d0000' },
-      { cat: 'Desporto', icon: '🎿', name: 'Ski', title: 'Melhor Esquiador', subtitle: 'Campeão das Pistas', accent: '#42a5f5', accent2: '#90caf9', bg: '#000a18', surface: '#001028', text: '#e8f4ff', cardBg: '#000e20' },
-      { cat: 'Desporto', icon: '⚡', name: 'E-Sports', title: 'E-Sports Championship', subtitle: 'Best Player of the Year', accent: '#7c4dff', accent2: '#b39ddb', bg: '#06001a', surface: '#0c0030', text: '#ede8ff', cardBg: '#09001a' },
-      { cat: 'Desporto', icon: '🏋️', name: 'Fitness', title: 'Melhor Atleta', subtitle: 'Saúde e Performance', accent: '#ff6d00', accent2: '#ffab40', bg: '#0a0300', surface: '#140600', text: '#fff8f0', cardBg: '#110400' },
-      { cat: 'Desporto', icon: '⛳', name: 'Golf', title: 'Golf Player of the Year', subtitle: 'Best Performance on Tour', accent: '#388e3c', accent2: '#81c784', bg: '#001200', surface: '#001c00', text: '#e8ffe8', cardBg: '#001600' },
-      { cat: 'Desporto', icon: '🏄', name: 'Surf', title: 'World Surf League', subtitle: 'Voto do Público', accent: '#0288d1', accent2: '#81d4fa', bg: '#000a18', surface: '#001525', text: '#e0f4ff', cardBg: '#001020' },
-      { cat: 'Desporto', icon: '🥋', name: 'Artes Marciais', title: 'Luta do Ano', subtitle: 'MMA Champion Vote', accent: '#d32f2f', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
-      { cat: 'Desporto', icon: '🎯', name: 'Darts', title: 'World Darts Championship', subtitle: 'Favorite Player', accent: '#ffc107', accent2: '#ffe082', bg: '#070500', surface: '#0f0900', text: '#fffce5', cardBg: '#0c0700' },
-      { cat: 'Desporto', icon: '🏈', name: 'Super Bowl', title: 'Super Bowl MVP', subtitle: 'Fan Vote', accent: '#1565c0', accent2: '#90caf9', bg: '#000a1a', surface: '#000f28', text: '#e8f4ff', cardBg: '#000c20' },
-      // ── MODA & BELEZA ──
-      { cat: 'Moda & Beleza', icon: '👗', name: 'Fashion Week', title: 'Fashion Week Awards', subtitle: 'Look mais marcante', accent: '#f06292', accent2: '#f8b4d0', bg: '#0a0005', surface: '#160010', text: '#ffe8f5', cardBg: '#120010' },
-      { cat: 'Moda & Beleza', icon: '💅', name: 'Melhor Look', title: 'Melhor Look da Temporada', subtitle: 'Fashion Icons', accent: '#ad1457', accent2: '#f48fb1', bg: '#0a000a', surface: '#160016', text: '#ffe8ff', cardBg: '#100010' },
-      { cat: 'Moda & Beleza', icon: '👠', name: 'Desfile', title: 'Melhor Coleção', subtitle: 'Votos da crítica e do público', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0004', surface: '#16000a', text: '#ffe8f0', cardBg: '#120006' },
-      { cat: 'Moda & Beleza', icon: '💄', name: 'Beleza', title: 'Beauty Awards', subtitle: 'O melhor da beleza', accent: '#ff6090', accent2: '#ffaac0', bg: '#0a0008', surface: '#180010', text: '#ffe8f4', cardBg: '#140010' },
-      { cat: 'Moda & Beleza', icon: '💍', name: 'Wedding', title: 'Melhor Coleção Noiva', subtitle: 'Inspiração para o grande dia', accent: '#f3e5f5', accent2: '#ffffff', bg: '#100a18', surface: '#180f20', text: '#ffffff', cardBg: '#150d1e' },
-      { cat: 'Moda & Beleza', icon: '👒', name: 'Chapéus', title: 'Hat of the Year', subtitle: 'O design mais icónico', accent: '#a0522d', accent2: '#d4a070', bg: '#080400', surface: '#120800', text: '#fff5e8', cardBg: '#0e0600' },
-      { cat: 'Moda & Beleza', icon: '🕶️', name: 'Acessórios', title: 'Best Accessories', subtitle: 'Style Defines', accent: '#ffd700', accent2: '#ffe880', bg: '#060400', surface: '#0e0900', text: '#fffce8', cardBg: '#0a0700' },
-      { cat: 'Moda & Beleza', icon: '👔', name: 'Men\'s Fashion', title: 'Best Men\'s Style', subtitle: 'Fashion Forward', accent: '#37474f', accent2: '#90a4ae', bg: '#06080a', surface: '#0c1014', text: '#eceff1', cardBg: '#0a0e12' },
-      { cat: 'Moda & Beleza', icon: '🌸', name: 'Primavera', title: 'Coleção Primavera', subtitle: 'As cores da estação', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#160010', text: '#ffe8f2', cardBg: '#120010' },
-      { cat: 'Moda & Beleza', icon: '❄️', name: 'Inverno', title: 'Coleção Inverno', subtitle: 'Elegância na estação fria', accent: '#90caf9', accent2: '#e3f2fd', bg: '#000a18', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
-      // ── GASTRONOMIA ──
       { cat: 'Gastronomia', icon: '🍽️', name: 'Restaurante do Ano', title: 'Restaurante do Ano', subtitle: 'A escolha do público', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#150a00', text: '#fff8e8', cardBg: '#120700' },
-      { cat: 'Gastronomia', icon: '⭐', name: 'Estrelas Michelin', title: 'Estrela Michelin', subtitle: 'Excelência gastronómica', accent: '#f44336', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
-      { cat: 'Gastronomia', icon: '👨‍🍳', name: 'Chef do Ano', title: 'Chef do Ano', subtitle: 'Quem domina a cozinha?', accent: '#ffffff', accent2: '#e0e0e0', bg: '#0a0a0a', surface: '#141414', text: '#f5f5f5', cardBg: '#111111' },
-      { cat: 'Gastronomia', icon: '🍷', name: 'Melhor Vinho', title: 'Wine Awards', subtitle: 'O melhor vinho do ano', accent: '#7b1fa2', accent2: '#ce93d8', bg: '#08000f', surface: '#100018', text: '#f5e8ff', cardBg: '#0c0015' },
-      { cat: 'Gastronomia', icon: '🍕', name: 'Pizza', title: 'Melhor Pizza', subtitle: 'O público escolhe!', accent: '#ff5722', accent2: '#ff8a65', bg: '#0a0200', surface: '#150400', text: '#fff5f0', cardBg: '#100300' },
-      { cat: 'Gastronomia', icon: '🍺', name: 'Cerveja Artesanal', title: 'Cerveja do Ano', subtitle: 'Craft Beer Awards', accent: '#e65100', accent2: '#ffab40', bg: '#0a0300', surface: '#140600', text: '#fff8f0', cardBg: '#100400' },
-      { cat: 'Gastronomia', icon: '🍰', name: 'Pastelaria', title: 'Melhor Pastelaria', subtitle: 'A sobremesa dos sonhos', accent: '#f8bbd9', accent2: '#fce4ec', bg: '#0a0005', surface: '#180010', text: '#ffe8f4', cardBg: '#140010' },
-      { cat: 'Gastronomia', icon: '🌮', name: 'Street Food', title: 'Street Food Awards', subtitle: 'A comida de rua favorita', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0400', surface: '#150800', text: '#fff8e5', cardBg: '#0f0500' },
-      { cat: 'Gastronomia', icon: '🍣', name: 'Sushi', title: 'Melhor Restaurante Japonês', subtitle: 'Itadakimasu!', accent: '#ef5350', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
-      { cat: 'Gastronomia', icon: '☕', name: 'Café', title: 'Melhor Café', subtitle: 'O espresso perfeito', accent: '#795548', accent2: '#bcaaa4', bg: '#050300', surface: '#0c0700', text: '#f5ece5', cardBg: '#080500' },
-      // ── NEGÓCIOS & EMPRESA ──
-      { cat: 'Negócios', icon: '🏢', name: 'Empresa do Ano', title: 'Empresa do Ano', subtitle: 'Excelência empresarial', accent: '#1565c0', accent2: '#90caf9', bg: '#000812', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
-      { cat: 'Negócios', icon: '💼', name: 'CEO do Ano', title: 'CEO do Ano', subtitle: 'Liderança de excelência', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
-      { cat: 'Negócios', icon: '🚀', name: 'Startup', title: 'Best Startup', subtitle: 'Innovation of the Year', accent: '#00e5ff', accent2: '#80f4ff', bg: '#000d15', surface: '#001520', text: '#e0faff', cardBg: '#001018' },
-      { cat: 'Negócios', icon: '💡', name: 'Inovação', title: 'Prémio Inovação', subtitle: 'A ideia do ano', accent: '#ffd600', accent2: '#ffee80', bg: '#060500', surface: '#0e0a00', text: '#fffce0', cardBg: '#0a0800' },
-      { cat: 'Negócios', icon: '🌍', name: 'Sustentabilidade', title: 'ESG Awards', subtitle: 'Empresas mais sustentáveis', accent: '#66bb6a', accent2: '#a5d6a7', bg: '#001500', surface: '#001f00', text: '#e8ffe8', cardBg: '#001a00' },
-      { cat: 'Negócios', icon: '📈', name: 'Crescimento', title: 'Fastest Growing Company', subtitle: 'Annual Business Awards', accent: '#26c6da', accent2: '#80deea', bg: '#001218', surface: '#001a20', text: '#e0f8ff', cardBg: '#001618' },
-      { cat: 'Negócios', icon: '🤝', name: 'Parceria', title: 'Best Partnership', subtitle: 'Strategic Alliance of the Year', accent: '#ab47bc', accent2: '#ce93d8', bg: '#060010', surface: '#0d0020', text: '#f5e8ff', cardBg: '#09001a' },
-      { cat: 'Negócios', icon: '🏦', name: 'Finanças', title: 'Finance Awards', subtitle: 'Best Financial Institution', accent: '#1a237e', accent2: '#7986cb', bg: '#000218', surface: '#000628', text: '#e8eaff', cardBg: '#000520' },
-      { cat: 'Negócios', icon: '⚙️', name: 'Indústria', title: 'Industry Excellence Award', subtitle: 'Manufacturing & Production', accent: '#546e7a', accent2: '#b0bec5', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
-      { cat: 'Negócios', icon: '🛒', name: 'Retalho', title: 'Best Retailer', subtitle: 'Customer Choice Award', accent: '#f57c00', accent2: '#ffcc02', bg: '#0a0500', surface: '#150a00', text: '#fff8e0', cardBg: '#100700' },
-      // ── EDUCAÇÃO ──
-      { cat: 'Educação', icon: '🎓', name: 'Melhor Professor', title: 'Professor do Ano', subtitle: 'Inspirar é transformar', accent: '#1976d2', accent2: '#90caf9', bg: '#000a1a', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
-      { cat: 'Educação', icon: '📚', name: 'Livro do Ano', title: 'Livro do Ano', subtitle: 'A leitura favorita', accent: '#8d6e63', accent2: '#bcaaa4', bg: '#060302', surface: '#0e0806', text: '#f5ece8', cardBg: '#0a0605' },
-      { cat: 'Educação', icon: '🔬', name: 'Ciência', title: 'Science Award', subtitle: 'Descoberta do Ano', accent: '#00acc1', accent2: '#80deea', bg: '#001218', surface: '#001a20', text: '#e0f8ff', cardBg: '#001618' },
-      { cat: 'Educação', icon: '🏫', name: 'Escola do Ano', title: 'Escola do Ano', subtitle: 'Excelência académica', accent: '#43a047', accent2: '#a5d6a7', bg: '#001400', surface: '#002000', text: '#e8ffe8', cardBg: '#001800' },
-      { cat: 'Educação', icon: '🧪', name: 'Inovação Educativa', title: 'EdTech Award', subtitle: 'O futuro da educação', accent: '#7c4dff', accent2: '#b39ddb', bg: '#060018', surface: '#0c0030', text: '#ede8ff', cardBg: '#090025' },
-      { cat: 'Educação', icon: '🌐', name: 'Língua', title: 'Melhor Curso de Línguas', subtitle: 'Language Learning Award', accent: '#0097a7', accent2: '#80deea', bg: '#000e14', surface: '#001520', text: '#e0f8ff', cardBg: '#001018' },
-      { cat: 'Educação', icon: '🎨', name: 'Arte', title: 'Prémio de Arte Jovem', subtitle: 'Os novos talentos', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
-      // ── ENTRETENIMENTO ──
-      { cat: 'Entretenimento', icon: '🎭', name: 'Comédia', title: 'Melhor Comediante', subtitle: 'Quem te faz rir mais?', accent: '#ffca28', accent2: '#fff176', bg: '#080600', surface: '#110e00', text: '#fffce5', cardBg: '#0d0a00' },
-      { cat: 'Entretenimento', icon: '🎪', name: 'Circo', title: 'Best Circus Act', subtitle: 'The Most Spectacular Show', accent: '#e53935', accent2: '#ff8a80', bg: '#0a0000', surface: '#160000', text: '#fff0f0', cardBg: '#120000' },
-      { cat: 'Entretenimento', icon: '🃏', name: 'Stand-Up', title: 'Stand-Up Comedy Awards', subtitle: 'O comediante do ano', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#150a00', text: '#fff8e8', cardBg: '#0f0600' },
-      { cat: 'Entretenimento', icon: '🎠', name: 'Parque Temático', title: 'Melhor Parque Temático', subtitle: 'Diversão para toda a família', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0008', surface: '#150010', text: '#ffe8f4', cardBg: '#10000e' },
-      { cat: 'Entretenimento', icon: '🎲', name: 'Jogos', title: 'Board Game of the Year', subtitle: 'The Game that Conquered Tables', accent: '#3949ab', accent2: '#9fa8da', bg: '#000515', surface: '#000a20', text: '#e8eaff', cardBg: '#000818' },
-      { cat: 'Entretenimento', icon: '🌈', name: 'Espetáculo', title: 'Best Live Show', subtitle: 'The Performance of the Year', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a000a', surface: '#150015', text: '#ffe8ff', cardBg: '#100010' },
-      { cat: 'Entretenimento', icon: '🎉', name: 'Festa do Ano', title: 'Evento do Ano', subtitle: 'A festa mais falada', accent: '#ffd600', accent2: '#ffe57f', bg: '#060500', surface: '#0e0a00', text: '#fffce5', cardBg: '#0a0800' },
-      { cat: 'Entretenimento', icon: '🤡', name: 'Animação Infantil', title: 'Melhor Animador Infantil', subtitle: 'Os pequenos escolhem!', accent: '#ff5722', accent2: '#ff8a65', bg: '#0a0200', surface: '#180600', text: '#fff5ee', cardBg: '#140400' },
-      // ── SOCIAL & COMUNIDADE ──
-      { cat: 'Social', icon: '🌍', name: 'Voluntário do Ano', title: 'Voluntário do Ano', subtitle: 'Heróis da comunidade', accent: '#43a047', accent2: '#a5d6a7', bg: '#001400', surface: '#001f00', text: '#e8ffe8', cardBg: '#001800' },
-      { cat: 'Social', icon: '❤️', name: 'Influencer Social', title: 'Influencer Social', subtitle: 'Quem mais impacto positivo criou?', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#120000' },
-      { cat: 'Social', icon: '🏘️', name: 'Bairro do Ano', title: 'Bairro do Ano', subtitle: 'A comunidade vota', accent: '#66bb6a', accent2: '#c8e6c9', bg: '#001200', surface: '#001c00', text: '#e8ffe8', cardBg: '#001600' },
-      { cat: 'Social', icon: '🤲', name: 'ONG', title: 'Melhor ONG', subtitle: 'Impacto social real', accent: '#1e88e5', accent2: '#90caf9', bg: '#000a18', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
-      { cat: 'Social', icon: '🌿', name: 'Eco Award', title: 'Eco Award', subtitle: 'Quem protege o planeta?', accent: '#2e7d32', accent2: '#81c784', bg: '#001000', surface: '#001800', text: '#e8ffe8', cardBg: '#001400' },
-      { cat: 'Social', icon: '👨‍👩‍👧', name: 'Família', title: 'Família do Ano', subtitle: 'Inspiração para todos', accent: '#ff8f00', accent2: '#ffd54f', bg: '#080500', surface: '#120900', text: '#fff8e8', cardBg: '#0e0700' },
-      // ── TECNOLOGIA ──
-      { cat: 'Tecnologia', icon: '💻', name: 'App do Ano', title: 'App of the Year', subtitle: 'A aplicação favorita', accent: '#2196f3', accent2: '#90caf9', bg: '#000a18', surface: '#001525', text: '#e8f4ff', cardBg: '#001020' },
-      { cat: 'Tecnologia', icon: '🤖', name: 'IA', title: 'Best AI Product', subtitle: 'The Future is Now', accent: '#00e5ff', accent2: '#80f4ff', bg: '#000d15', surface: '#001520', text: '#e0faff', cardBg: '#001018' },
-      { cat: 'Tecnologia', icon: '📱', name: 'Smartphone', title: 'Smartphone of the Year', subtitle: 'Best Mobile Device', accent: '#607d8b', accent2: '#b0bec5', bg: '#04060a', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
-      { cat: 'Tecnologia', icon: '🔋', name: 'Energia Verde', title: 'Clean Energy Award', subtitle: 'Sustainable Technology', accent: '#00c853', accent2: '#69f0ae', bg: '#001a08', surface: '#002410', text: '#e8fff2', cardBg: '#001e0c' },
-      { cat: 'Tecnologia', icon: '🛸', name: 'Espaço', title: 'Space Innovation Award', subtitle: 'To Infinity and Beyond', accent: '#7e57c2', accent2: '#b39ddb', bg: '#04001a', surface: '#08002a', text: '#ede8ff', cardBg: '#060020' },
-      { cat: 'Tecnologia', icon: '🔐', name: 'Cibersegurança', title: 'Cybersecurity Award', subtitle: 'Best Defense Platform', accent: '#ff3d00', accent2: '#ff8a65', bg: '#0a0100', surface: '#150200', text: '#fff5f0', cardBg: '#100100' },
-      { cat: 'Tecnologia', icon: '🎮', name: 'Gaming', title: 'Game Developers Choice', subtitle: 'Best Indie Game', accent: '#9c27b0', accent2: '#ce93d8', bg: '#060010', surface: '#0c001c', text: '#f5e8ff', cardBg: '#090015' },
-      // ── POLÍTICA & SOCIEDADE ──
-      { cat: 'Sociedade', icon: '🗳️', name: 'Eleições', title: 'Escolha do Povo', subtitle: 'A democracia em acção', accent: '#1565c0', accent2: '#90caf9', bg: '#000818', surface: '#001028', text: '#e8f4ff', cardBg: '#000e20' },
-      { cat: 'Sociedade', icon: '🏛️', name: 'Câmara Municipal', title: 'Melhor Projeto Municipal', subtitle: 'Vote no melhor projeto', accent: '#795548', accent2: '#bcaaa4', bg: '#060300', surface: '#0e0800', text: '#f5ece5', cardBg: '#0a0500' },
-      { cat: 'Sociedade', icon: '⚖️', name: 'Justiça', title: 'Prémio de Justiça', subtitle: 'Excelência jurídica', accent: '#546e7a', accent2: '#b0bec5', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
-      { cat: 'Sociedade', icon: '📰', name: 'Jornalismo', title: 'Prémio de Jornalismo', subtitle: 'A melhor reportagem do ano', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#060504', surface: '#0d0a08', text: '#f5f0e8', cardBg: '#0a0806' },
-      { cat: 'Sociedade', icon: '🌐', name: 'Diplomacia', title: 'Global Leadership Award', subtitle: 'Making the World Better', accent: '#26a69a', accent2: '#80cbc4', bg: '#000e0d', surface: '#001818', text: '#e0f8f5', cardBg: '#001414' },
-      // ── NATUREZA & ANIMAIS ──
-      { cat: 'Natureza', icon: '🐾', name: 'Animal do Ano', title: 'Animal do Ano', subtitle: 'Vote no seu favorito', accent: '#8d6e63', accent2: '#d7bca8', bg: '#060302', surface: '#0e0806', text: '#f5ece8', cardBg: '#0a0605' },
-      { cat: 'Natureza', icon: '🦁', name: 'Safari', title: 'Wildlife Photo Award', subtitle: 'Best Nature Photography', accent: '#f57f17', accent2: '#ffcc02', bg: '#080500', surface: '#110a00', text: '#fffce5', cardBg: '#0d0700' },
-      { cat: 'Natureza', icon: '🌺', name: 'Jardim', title: 'Melhor Jardim', subtitle: 'Natureza em flor', accent: '#f06292', accent2: '#f8bbd0', bg: '#0a0006', surface: '#160010', text: '#ffe8f4', cardBg: '#12000e' },
-      { cat: 'Natureza', icon: '🌊', name: 'Oceano', title: 'Ocean Award', subtitle: 'Protecting Our Seas', accent: '#0288d1', accent2: '#81d4fa', bg: '#000a18', surface: '#001528', text: '#e0f4ff', cardBg: '#001020' },
-      { cat: 'Natureza', icon: '🏔️', name: 'Montanha', title: 'Best Mountain Resort', subtitle: 'Peak Experience', accent: '#546e7a', accent2: '#b0bec5', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
-      // ── TURISMO ──
-      { cat: 'Turismo', icon: '✈️', name: 'Destino do Ano', title: 'Destino do Ano', subtitle: 'Onde querem viajar?', accent: '#26c6da', accent2: '#80deea', bg: '#001218', surface: '#001a25', text: '#e0f8ff', cardBg: '#001618' },
-      { cat: 'Turismo', icon: '🏨', name: 'Hotel do Ano', title: 'Hotel of the Year', subtitle: 'Best Hospitality', accent: '#c9a84c', accent2: '#e8d5a3', bg: '#070600', surface: '#100e00', text: '#f5f0e5', cardBg: '#0c0a00' },
-      { cat: 'Turismo', icon: '🗺️', name: 'Guia do Ano', title: 'Best Travel Guide', subtitle: 'Your Trusted Travel Companion', accent: '#ff7043', accent2: '#ffab91', bg: '#0a0300', surface: '#150600', text: '#fff5f0', cardBg: '#100400' },
-      { cat: 'Turismo', icon: '🍾', name: 'Cruzeiro', title: 'Best Cruise Line', subtitle: 'Sailing in Luxury', accent: '#0288d1', accent2: '#81d4fa', bg: '#000a18', surface: '#001520', text: '#e0f4ff', cardBg: '#001020' },
-      { cat: 'Turismo', icon: '⛺', name: 'Camping', title: 'Best Camping Experience', subtitle: 'Back to Nature', accent: '#558b2f', accent2: '#aed581', bg: '#010e00', surface: '#021600', text: '#f0ffe0', cardBg: '#011200' },
-      { cat: 'Turismo', icon: '🗽', name: 'Cidade', title: 'Melhor Cidade para Visitar', subtitle: 'The World is Yours', accent: '#42a5f5', accent2: '#90caf9', bg: '#000a18', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
-      // ── SAÚDE & BEM-ESTAR ──
-      { cat: 'Saúde', icon: '💊', name: 'Farmácia', title: 'Melhor Farmácia', subtitle: 'Cuidar é uma arte', accent: '#00897b', accent2: '#80cbc4', bg: '#000e0d', surface: '#001818', text: '#e0f8f5', cardBg: '#001414' },
-      { cat: 'Saúde', icon: '🏥', name: 'Hospital', title: 'Hospital do Ano', subtitle: 'Excelência em saúde', accent: '#1e88e5', accent2: '#90caf9', bg: '#000a18', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
-      { cat: 'Saúde', icon: '🧘', name: 'Bem-Estar', title: 'Wellness Awards', subtitle: 'Corpo e mente em harmonia', accent: '#80cbc4', accent2: '#b2dfdb', bg: '#001212', surface: '#001c1c', text: '#e0f8f5', cardBg: '#001616' },
-      { cat: 'Saúde', icon: '🏃', name: 'Running', title: 'Corrida do Ano', subtitle: 'O atleta mais inspirador', accent: '#ff7043', accent2: '#ffab91', bg: '#0a0200', surface: '#160400', text: '#fff5f0', cardBg: '#120300' },
-      { cat: 'Saúde', icon: '🥗', name: 'Nutrição', title: 'Best Nutritionist', subtitle: 'Saúde começa no prato', accent: '#66bb6a', accent2: '#c8e6c9', bg: '#001200', surface: '#001c00', text: '#e8ffe8', cardBg: '#001600' },
-      // ── ARTES VISUAIS ──
-      { cat: 'Artes', icon: '🎨', name: 'Pintura', title: 'Prémio de Pintura', subtitle: 'A obra mais marcante', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#120000' },
-      { cat: 'Artes', icon: '🖼️', name: 'Galeria', title: 'Gallery of the Year', subtitle: 'Best Exhibition', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#060504', surface: '#0c0a08', text: '#f5f0e5', cardBg: '#0a0806' },
-      { cat: 'Artes', icon: '📸', name: 'Fotografia', title: 'Fotógrafo do Ano', subtitle: 'A imagem que marcou', accent: '#9e9e9e', accent2: '#e0e0e0', bg: '#060606', surface: '#0e0e0e', text: '#f5f5f5', cardBg: '#0c0c0c' },
-      { cat: 'Artes', icon: '✏️', name: 'Ilustração', title: 'Best Illustration', subtitle: 'Art that Speaks', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#160a00', text: '#fff8e5', cardBg: '#120700' },
-      { cat: 'Artes', icon: '🏺', name: 'Escultura', title: 'Sculpture Award', subtitle: 'Best 3D Work', accent: '#8d6e63', accent2: '#d7bca8', bg: '#050302', surface: '#0c0806', text: '#f5ece5', cardBg: '#090605' },
-      { cat: 'Artes', icon: '🎭', name: 'Dança', title: 'Melhor Companhia de Dança', subtitle: 'O movimento como arte', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#180010', text: '#ffe8f4', cardBg: '#140010' },
-      { cat: 'Artes', icon: '📖', name: 'Literatura', title: 'Prémio Literário', subtitle: 'A melhor obra do ano', accent: '#5d4037', accent2: '#a1887f', bg: '#060302', surface: '#0e0806', text: '#f5ece8', cardBg: '#0a0605' },
-      { cat: 'Artes', icon: '🎪', name: 'Performance', title: 'Best Performance Art', subtitle: 'Pushing the Boundaries', accent: '#7c4dff', accent2: '#b39ddb', bg: '#060018', surface: '#0c0028', text: '#ede8ff', cardBg: '#090020' },
-      // ── RELIGIÃO & TRADIÇÃO ──
-      { cat: 'Tradição', icon: '⛪', name: 'Paróquia', title: 'Melhor Festa de Paróquia', subtitle: 'A tradição que une', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
-      { cat: 'Tradição', icon: '🎊', name: 'Carnaval', title: 'Melhor Grupo de Carnaval', subtitle: 'A alegria em competição', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a000a', surface: '#180015', text: '#ffe8ff', cardBg: '#120010' },
-      { cat: 'Tradição', icon: '🕯️', name: 'Festas Populares', title: 'Melhor Arraial', subtitle: 'Santos Populares', accent: '#ff6d00', accent2: '#ffab40', bg: '#0a0300', surface: '#150600', text: '#fff5e5', cardBg: '#100400' },
-      { cat: 'Tradição', icon: '🌙', name: 'Ramadão', title: 'Celebração do Ramadão', subtitle: 'Unidade e espiritualidade', accent: '#1a6e3c', accent2: '#80cbc4', bg: '#000e08', surface: '#001510', text: '#e8fff5', cardBg: '#001210' },
-      { cat: 'Tradição', icon: '🎋', name: 'Festival Oriental', title: 'Oriental Festival', subtitle: 'East meets West', accent: '#c62828', accent2: '#ef9a9a', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
-      // ── ESPECIAIS ──
-      { cat: 'Especial', icon: '🌟', name: 'Gala de Natal', title: 'Gala de Natal', subtitle: 'A magia do Natal', accent: '#c62828', accent2: '#ef9a9a', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
-      { cat: 'Especial', icon: '🎇', name: 'Ano Novo', title: 'Fim de Ano', subtitle: 'A escolha do ano que passou', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#0e0900', text: '#fffce5', cardBg: '#0a0700' },
-      { cat: 'Especial', icon: '💝', name: 'Dia dos Namorados', title: 'Casal do Ano', subtitle: 'O amor vence', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#180010', text: '#ffe8f2', cardBg: '#140010' },
-      { cat: 'Especial', icon: '🎃', name: 'Halloween', title: 'Melhor Fantasia', subtitle: 'Trick or Treat!', accent: '#ff6d00', accent2: '#ffab40', bg: '#060200', surface: '#0f0500', text: '#fff5e5', cardBg: '#0c0300' },
-      { cat: 'Especial', icon: '🌸', name: 'Primavera', title: 'Festival de Primavera', subtitle: 'A estação mais colorida', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#180012', text: '#ffe8f4', cardBg: '#140010' },
-      { cat: 'Especial', icon: '🏖️', name: 'Verão', title: 'Festival de Verão', subtitle: 'A estação mais quente', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#180a00', text: '#fff8e5', cardBg: '#130700' },
-      { cat: 'Especial', icon: '🍂', name: 'Outono', title: 'Festival de Outono', subtitle: 'A estação das colheitas', accent: '#e65100', accent2: '#ffab40', bg: '#0a0300', surface: '#160600', text: '#fff5e0', cardBg: '#110400' },
-      { cat: 'Especial', icon: '❄️', name: 'Inverno', title: 'Festival de Inverno', subtitle: 'A magia da neve', accent: '#90caf9', accent2: '#e3f2fd', bg: '#000a18', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
-      { cat: 'Especial', icon: '🎓', name: 'Formatura', title: 'Cerimónia de Formatura', subtitle: 'Os melhores alunos', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
-      { cat: 'Especial', icon: '🎖️', name: 'Gala Militar', title: 'Gala das Forças Armadas', subtitle: 'Serviço e Honra', accent: '#546e7a', accent2: '#90a4ae', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
-      { cat: 'Especial', icon: '🏅', name: 'Gala Anual', title: 'Gala Anual', subtitle: 'Celebrando os melhores momentos', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#0e0900', text: '#fffce5', cardBg: '#0a0800' },
-      { cat: 'Especial', icon: '✨', name: 'Prémio Especial', title: 'Prémio Especial', subtitle: 'Uma homenagem única', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#03020a', surface: '#07060f', text: '#f5f0e8', cardBg: '#06050e' },
-      // ── MEDIA & DIGITAL ──
-      { cat: 'Media', icon: '📱', name: 'Influencer', title: 'Influencer do Ano', subtitle: 'Quem domina as redes?', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a0008', surface: '#180015', text: '#ffe8ff', cardBg: '#120010' },
-      { cat: 'Media', icon: '🎙️', name: 'Podcast', title: 'Podcast do Ano', subtitle: 'O episódio que não perdeste', accent: '#7c4dff', accent2: '#b39ddb', bg: '#060018', surface: '#0c0028', text: '#ede8ff', cardBg: '#090020' },
-      { cat: 'Media', icon: '📰', name: 'Blog', title: 'Blog do Ano', subtitle: 'O conteúdo que inspirou', accent: '#00acc1', accent2: '#80deea', bg: '#001214', surface: '#001820', text: '#e0f8ff', cardBg: '#001618' },
-      { cat: 'Media', icon: '📺', name: 'Canal YouTube', title: 'Canal do Ano', subtitle: 'O criador favorito', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
-      { cat: 'Media', icon: '🔊', name: 'Rádio', title: 'Estação de Rádio do Ano', subtitle: 'O programa que deu para ouvir', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#160a00', text: '#fff8e5', cardBg: '#100600' },
-      { cat: 'Media', icon: '📷', name: 'Instagram', title: 'Best Instagram Account', subtitle: 'Most Creative Feed', accent: '#e1306c', accent2: '#f77737', bg: '#0a0004', surface: '#160008', text: '#ffe8f2', cardBg: '#120006' },
-      { cat: 'Media', icon: '🎞️', name: 'TikTok', title: 'TikTok Creator of the Year', subtitle: 'Best Short-Form Content', accent: '#69c9d0', accent2: '#b0e8ea', bg: '#000a0a', surface: '#001212', text: '#e0f8f8', cardBg: '#001010' },
-      // ── REGIONAL & NACIONAL ──
-      { cat: 'Regional', icon: '🇵🇹', name: 'Portugal', title: 'Portugal em Destaque', subtitle: 'O melhor de Portugal', accent: '#006600', accent2: '#cc0000', bg: '#001200', surface: '#002000', text: '#e8ffe8', cardBg: '#001a00' },
-      { cat: 'Regional', icon: '🌊', name: 'Algarve', title: 'Melhor do Algarve', subtitle: 'A joia do sul', accent: '#ff6d00', accent2: '#ffab40', bg: '#0a0400', surface: '#180800', text: '#fff5e5', cardBg: '#130500' },
-      { cat: 'Regional', icon: '🏙️', name: 'Lisboa', title: 'Lisboa em Foco', subtitle: 'A capital em destaque', accent: '#1565c0', accent2: '#90caf9', bg: '#000812', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
-      { cat: 'Regional', icon: '🎸', name: 'Porto', title: 'Porto na Ribeira', subtitle: 'A cidade invicta', accent: '#b71c1c', accent2: '#ef9a9a', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
-      { cat: 'Regional', icon: '🌿', name: 'Açores', title: 'Festival dos Açores', subtitle: 'A beleza das ilhas', accent: '#2e7d32', accent2: '#81c784', bg: '#001000', surface: '#001800', text: '#e8ffe8', cardBg: '#001400' },
-      { cat: 'Regional', icon: '🌊', name: 'Madeira', title: 'Festival da Madeira', subtitle: 'A ilha das flores', accent: '#ad1457', accent2: '#f48fb1', bg: '#0a000a', surface: '#180016', text: '#ffe8ff', cardBg: '#120010' },
-      // ── KIDS & FAMÍLIA ──
-      { cat: 'Kids', icon: '🧒', name: 'Criança', title: 'Talento Jovem', subtitle: 'As estrelas do amanhã', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#180a00', text: '#fff8e5', cardBg: '#130700' },
-      { cat: 'Kids', icon: '📚', name: 'Livro Infantil', title: 'Melhor Livro Infantil', subtitle: 'A história favorita das crianças', accent: '#ff5722', accent2: '#ff8a65', bg: '#0a0200', surface: '#180500', text: '#fff5f0', cardBg: '#130300' },
-      { cat: 'Kids', icon: '🧸', name: 'Brinquedo', title: 'Toy of the Year', subtitle: 'O brinquedo mais querido', accent: '#f06292', accent2: '#f8bbd0', bg: '#0a0005', surface: '#180010', text: '#ffe8f4', cardBg: '#120010' },
-      { cat: 'Kids', icon: '🎒', name: 'Escola Primária', title: 'Escola Primária do Ano', subtitle: 'A escola dos sonhos', accent: '#43a047', accent2: '#a5d6a7', bg: '#001400', surface: '#002000', text: '#e8ffe8', cardBg: '#001800' },
-      { cat: 'Kids', icon: '🎠', name: 'Parque Infantil', title: 'Melhor Parque Infantil', subtitle: 'Diversão em segurança', accent: '#26c6da', accent2: '#80deea', bg: '#001218', surface: '#001a20', text: '#e0f8ff', cardBg: '#001618' },
-      // ── LUXO ──
-      { cat: 'Luxo', icon: '💎', name: 'Diamante', title: 'Diamond Awards', subtitle: 'Only the Best', accent: '#e8d5a3', accent2: '#ffffff', bg: '#03020a', surface: '#070610', text: '#f5f0ff', cardBg: '#06050e' },
-      { cat: 'Luxo', icon: '🚗', name: 'Automóvel', title: 'Car of the Year', subtitle: 'Luxury & Performance', accent: '#c4973a', accent2: '#e8d5a3', bg: '#04040a', surface: '#080814', text: '#ede9e0', cardBg: '#0a0a16' },
-      { cat: 'Luxo', icon: '⌚', name: 'Relógio', title: 'Watch of the Year', subtitle: 'Craftsmanship at its Finest', accent: '#c4973a', accent2: '#e8d5a3', bg: '#040304', surface: '#0a0a0a', text: '#f5f5f0', cardBg: '#0c0c0c' },
-      { cat: 'Luxo', icon: '🛥️', name: 'Yatch', title: 'Yacht of the Year', subtitle: 'Sailing in Style', accent: '#e0f4ff', accent2: '#ffffff', bg: '#000a18', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
-      { cat: 'Luxo', icon: '🏰', name: 'Palácio', title: 'Best Luxury Property', subtitle: 'Living Like Royalty', accent: '#c9a84c', accent2: '#e8d5a3', bg: '#060400', surface: '#100900', text: '#f5f0e8', cardBg: '#0c0700' },
-      // ── COR ÚNICA ──
-      { cat: 'Cor Única', icon: '🟠', name: 'Laranja Neon', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ff5a00', accent2: '#ff8f40', bg: '#070200', surface: '#100500', text: '#fff5f0', cardBg: '#0d0400' },
-      { cat: 'Cor Única', icon: '🟣', name: 'Roxo Profundo', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#9c27b0', accent2: '#ce93d8', bg: '#060010', surface: '#0e001e', text: '#f5e8ff', cardBg: '#09001a' },
-      { cat: 'Cor Única', icon: '🔵', name: 'Azul Elétrico', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#2979ff', accent2: '#82b1ff', bg: '#000818', surface: '#001030', text: '#e8f4ff', cardBg: '#000e28' },
-      { cat: 'Cor Única', icon: '🟢', name: 'Verde Néon', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#00e676', accent2: '#69f0ae', bg: '#001a08', surface: '#002412', text: '#e8fff2', cardBg: '#001e0c' },
-      { cat: 'Cor Única', icon: '🔴', name: 'Vermelho Sangue', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ff1744', accent2: '#ff7070', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
-      { cat: 'Cor Única', icon: '⚪', name: 'Branco Puro', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ffffff', accent2: '#e0e0e0', bg: '#0a0a0a', surface: '#141414', text: '#f5f5f5', cardBg: '#111111' },
-      { cat: 'Cor Única', icon: '🟡', name: 'Dourado Real', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#100a00', text: '#fffce5', cardBg: '#0a0800' },
-      { cat: 'Cor Única', icon: '🩷', name: 'Rosa Quente', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a0008', surface: '#180015', text: '#ffe8ff', cardBg: '#130010' },
-      { cat: 'Cor Única', icon: '🩵', name: 'Ciano Gelo', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#00e5ff', accent2: '#80f4ff', bg: '#000d15', surface: '#001522', text: '#e0faff', cardBg: '#001018' },
-      { cat: 'Cor Única', icon: '🤎', name: 'Bronze Vintage', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#a0522d', accent2: '#d4a070', bg: '#060300', surface: '#0e0800', text: '#fff5e8', cardBg: '#0a0500' },
+      { cat: 'Empresas', icon: '🏢', name: 'Empresa do Ano', title: 'Empresa do Ano', subtitle: 'A mais inovadora', accent: '#42a5f5', accent2: '#90caf9', bg: '#000a18', surface: '#000f25', text: '#e8f4ff', cardBg: '#000c20' },
+      { cat: 'Grupo Armindo', icon: '✨', name: 'GA Awards', title: 'Grupo Armindo Awards', subtitle: 'Os melhores do grupo', accent: '#c4973a', accent2: '#e8d5a3', bg: '#07060e', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#0e0d1c' },
     ];
 
-    window.ALL_TEMPLATES = TEMPLATES;
-
-    /* ── BUILD TEMPLATE GRID ── */
-    function buildTemplateGrid(filter = '', catFilter = 'all') {
+    function buildTemplateGrid(search = '', activeCat = 'all') {
       const grid = document.getElementById('templateGrid');
-      if (!grid) return;
       const cats = [...new Set(TEMPLATES.map(t => t.cat))];
-      // Build category tabs
-      const tabsEl = document.getElementById('templateCats');
-      if (tabsEl && tabsEl.dataset.built !== '1') {
-        tabsEl.innerHTML = '';
-        const all = document.createElement('button');
-        all.className = 'cat-tab active';
-        all.textContent = 'Todos';
-        all.dataset.cat = 'all';
-        all.onclick = () => { filterTemplates('', 'all'); document.getElementById('templateSearch').value = ''; };
-        tabsEl.appendChild(all);
-        cats.forEach(c => {
-          const btn = document.createElement('button');
-          btn.className = 'cat-tab';
-          btn.textContent = c;
-          btn.dataset.cat = c;
-          btn.onclick = () => { filterTemplates(document.getElementById('templateSearch').value, c); };
-          tabsEl.appendChild(btn);
-        });
-        tabsEl.dataset.built = '1';
+      const catBar = document.getElementById('templateCats');
+      if (!catBar.querySelector('.cat-tab')) {
+        catBar.innerHTML = `<button class="cat-tab active" data-cat="all" onclick="filterTemplates('','all')">Todos</button>` +
+          cats.map(c => `<button class="cat-tab" data-cat="${c}" onclick="filterTemplates('','${c}')">${c}</button>`).join('');
       }
-
-      const filtered = TEMPLATES.filter(t => {
-        const matchSearch = !filter || t.name.toLowerCase().includes(filter.toLowerCase()) || t.title.toLowerCase().includes(filter.toLowerCase()) || t.cat.toLowerCase().includes(filter.toLowerCase());
-        const matchCat = catFilter === 'all' || t.cat === catFilter;
-        return matchSearch && matchCat;
-      });
-
+      let filtered = TEMPLATES;
+      if (activeCat !== 'all') filtered = filtered.filter(t => t.cat === activeCat);
+      if (search) filtered = filtered.filter(t => t.name.toLowerCase().includes(search.toLowerCase()) || t.cat.toLowerCase().includes(search.toLowerCase()));
+      document.querySelector('.template-count').textContent = filtered.length + ' templates';
       grid.innerHTML = '';
-      if (filtered.length === 0) {
-        grid.innerHTML = '<div class="no-results">Nenhum template encontrado.</div>';
-        return;
-      }
-
-      filtered.forEach((t, i) => {
+      filtered.forEach(t => {
         const card = document.createElement('div');
         card.className = 'template-card';
         card.style.cssText = `--tc-accent:${t.accent};--tc-bg:${t.bg};--tc-text:${t.text};`;
-        card.innerHTML = `
-          <div class="tc-preview">
-            <div class="tc-dot"></div>
-            <div class="tc-lines">
-              <div class="tc-line tc-line--title"></div>
-              <div class="tc-line tc-line--sub"></div>
-            </div>
-            <div class="tc-swatch">
-              <span class="tc-emoji">${t.icon}</span>
-            </div>
-          </div>
-          <div class="tc-info">
-            <div class="tc-name">${t.name}</div>
-            <div class="tc-cat">${t.cat}</div>
-          </div>
-        `;
+        card.innerHTML = `<div class="tc-preview"><div class="tc-dot"></div><div class="tc-lines"><div class="tc-line tc-line--title"></div><div class="tc-line tc-line--sub"></div></div><div class="tc-swatch"><span class="tc-emoji">${t.icon}</span></div></div><div class="tc-info"><div class="tc-name">${t.name}</div><div class="tc-cat">${t.cat}</div></div>`;
         card.onclick = () => applyTemplate(t, card);
         grid.appendChild(card);
       });
     }
 
     window.filterTemplates = function (search, cat) {
-      // Update active tab
       document.querySelectorAll('.cat-tab').forEach(b => {
         b.classList.toggle('active', b.dataset.cat === cat || (!cat && b.dataset.cat === 'all'));
       });
@@ -471,41 +572,23 @@
     };
 
     async function applyTemplate(t, card) {
-      // Populate theme fields
-      setColorField('t_bg', t.bg);
-      setColorField('t_surface', t.surface || '#0d0c1a');
-      setColorField('t_accent', t.accent);
-      setColorField('t_accent2', t.accent2);
-      setColorField('t_text', t.text);
-      setColorField('t_cardBg', t.cardBg || t.bg);
-      // Always overwrite event info fields
+      setColorField('t_bg', t.bg); setColorField('t_surface', t.surface || '#0d0c1a');
+      setColorField('t_accent', t.accent); setColorField('t_accent2', t.accent2);
+      setColorField('t_text', t.text); setColorField('t_cardBg', t.cardBg || t.bg);
       document.getElementById('f_title').value = t.title;
       document.getElementById('f_subtitle').value = t.subtitle;
-      // Visual feedback immediately
       document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');
       updatePreview();
-      // Show applying state
       showToast(`⟳ A aplicar "${t.name}"…`);
-      // Save theme to Firebase
-      const theme = {
-        bg: t.bg,
-        surface: t.surface || '#0d0c1a',
-        accent: t.accent,
-        accent2: t.accent2,
-        text: t.text,
-        cardBg: t.cardBg || t.bg,
-      };
+      const theme = { bg: t.bg, surface: t.surface || '#0d0c1a', accent: t.accent, accent2: t.accent2, text: t.text, cardBg: t.cardBg || t.bg };
       await set(ref(db, 'config/theme'), theme);
-      // Save event info to Firebase
       await set(ref(db, 'config/title'), t.title);
       await set(ref(db, 'config/subtitle'), t.subtitle);
       showToast(`✦ Template "${t.name}" aplicado!`);
     }
 
-    window.applyPreset = applyTemplate.bind(null); // legacy compat
-
-    /* ── LIVE PREVIEW ── */
+    // ── LIVE PREVIEW ──
     function updatePreview() {
       const bg = document.getElementById('t_bg')?.value || '#07060e';
       const accent = document.getElementById('t_accent')?.value || '#c4973a';
@@ -538,129 +621,7 @@
       updatePreview();
     };
 
-    /* ── CANDIDATES ── */
-    function renderCandidateList() {
-      const list = document.getElementById('candidateList');
-      list.innerHTML = '';
-      document.getElementById('candidateCount').textContent = candidates.length + ' candidatos';
-      if (candidates.length === 0) {
-        list.innerHTML = '<div class="empty-list">Nenhum candidato. Adiciona um abaixo!</div>';
-        return;
-      }
-      candidates.forEach((c, i) => {
-        const item = document.createElement('div');
-        item.className = 'candidate-item';
-        item.innerHTML = `
-          <div class="c-num">${String(i + 1).padStart(2, '0')}</div>
-          <div class="c-thumb">
-            ${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="c-initial">${c.name.charAt(0)}</div>`}
-          </div>
-          <div class="c-info">
-            <div class="c-name">${c.name}</div>
-            ${c.subtitle ? `<div class="c-sub">${c.subtitle}</div>` : ''}
-          </div>
-          <span class="c-votes-badge" data-id="${c.id}">${(votes[c.id] || 0)} votos</span>
-          <div class="c-actions">
-            <button class="btn-icon" title="Editar" onclick="editCandidate(${i})">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
-            <button class="btn-icon danger" title="Remover" onclick="removeCandidate(${i})">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-            </button>
-          </div>
-        `;
-        list.appendChild(item);
-      });
-    }
-
-    function renderResults(v) {
-      const area = document.getElementById('resultsArea');
-      if (candidates.length === 0) { area.innerHTML = '<div class="empty-list">Sem candidatos.</div>'; return; }
-      const total = Object.values(v).reduce((a, b) => a + b, 0);
-      const sorted = [...candidates].map(c => ({ ...c, count: v[c.id] || 0 })).sort((a, b) => b.count - a.count);
-      area.innerHTML = '';
-      sorted.forEach((c, i) => {
-        const pct = total ? (c.count / total * 100).toFixed(1) : 0;
-        const row = document.createElement('div');
-        row.className = 'result-row' + (i === 0 && c.count > 0 ? ' result-row--leader' : '');
-        row.innerHTML = `
-          <div class="result-rank">${i === 0 && c.count > 0 ? '🏆' : '#' + (i + 1)}</div>
-          <div class="result-thumb">
-            ${c.photo ? `<img src="${c.photo}"/>` : `<div class="c-initial" style="font-size:0.9rem">${c.name.charAt(0)}</div>`}
-          </div>
-          <div class="result-info">
-            <div class="result-name">${c.name}</div>
-            <div class="result-bar-wrap"><div class="result-bar" style="width:${pct}%"></div></div>
-          </div>
-          <div class="result-count">${c.count} <span>${pct}%</span></div>
-        `;
-        area.appendChild(row);
-      });
-    }
-
-    window.openAddCandidate = function () {
-      editingIndex = -1;
-      document.getElementById('candidateModalTitle').textContent = 'Adicionar Candidato';
-      document.getElementById('c_name').value = '';
-      document.getElementById('c_subtitle').value = '';
-      document.getElementById('c_description').value = '';
-      document.getElementById('c_photoB64').value = '';
-      const preview = document.getElementById('c_photoPreview');
-      preview.style.display = 'none'; preview.src = '';
-      openModal('candidateModal');
-    };
-
-    window.editCandidate = function (i) {
-      editingIndex = i;
-      const c = candidates[i];
-      document.getElementById('candidateModalTitle').textContent = 'Editar Candidato';
-      document.getElementById('c_name').value = c.name || '';
-      document.getElementById('c_subtitle').value = c.subtitle || '';
-      document.getElementById('c_description').value = c.description || '';
-      document.getElementById('c_photoB64').value = c.photo || '';
-      const preview = document.getElementById('c_photoPreview');
-      if (c.photo) { preview.src = c.photo; preview.style.display = 'block'; }
-      else { preview.style.display = 'none'; preview.src = ''; }
-      openModal('candidateModal');
-    };
-
-    window.removeCandidate = async function (i) {
-      if (!confirm('Remover este candidato?')) return;
-      candidates.splice(i, 1);
-      await set(ref(db, 'config/candidates'), candidates);
-      showToast('✦ Candidato removido');
-    };
-
-    window.saveCandidate = async function () {
-      const name = document.getElementById('c_name').value.trim();
-      if (!name) { document.getElementById('c_name').focus(); return; }
-      const c = {
-        id: editingIndex >= 0 ? candidates[editingIndex].id : 'c_' + Date.now(),
-        name,
-        subtitle: document.getElementById('c_subtitle').value.trim(),
-        description: document.getElementById('c_description').value.trim(),
-        photo: document.getElementById('c_photoB64').value || '',
-      };
-      if (editingIndex >= 0) { candidates[editingIndex] = c; }
-      else { candidates.push(c); }
-      await set(ref(db, 'config/candidates'), candidates);
-      closeModal('candidateModal');
-      showToast('✦ Candidato guardado');
-    };
-
-    window.handlePhotoUpload = function (input) {
-      const file = input.files[0]; if (!file) return;
-      if (file.size > 600000) { alert('Imagem demasiado grande. Máx. 500KB.'); return; }
-      const reader = new FileReader();
-      reader.onload = e => {
-        const b64 = e.target.result;
-        document.getElementById('c_photoB64').value = b64;
-        const preview = document.getElementById('c_photoPreview');
-        preview.src = b64; preview.style.display = 'block';
-      };
-      reader.readAsDataURL(file);
-    };
-
+    // ── MODALS / TOAST ──
     function openModal(id) { document.getElementById(id).classList.add('show'); }
     window.closeModal = function (id) { document.getElementById(id).classList.remove('show'); };
 
@@ -671,11 +632,118 @@
       setTimeout(() => t.classList.remove('show'), 3500);
     }
 
+
+    // ── BROADCAST CONTROLS ──
+    window.bcRevealNext = async function () {
+      const bc = config.broadcast || {};
+      const catId = bc.catId || config.activeCategory || categories[0]?.id;
+      const cat = categories.find(c => c.id === catId) || categories[0];
+      if (!cat) return;
+      const max = (cat.candidates || []).length;
+      const current = bc.revealed ?? 0;
+      if (current >= max) { showToast('✦ Todos os candidatos já revelados'); return; }
+      const next = current + 1;
+      await set(ref(db, 'config/broadcast/revealed'), next);
+      const name = (cat.candidates || []).slice().reverse()[current]?.name || '';
+      showToast(`✦ Revelado: ${name} (${next}/${max})`);
+      renderBroadcastPreview();
+    };
+
+    window.bcRevealAll = async function () {
+      const bc = config.broadcast || {};
+      const catId = bc.catId || config.activeCategory || categories[0]?.id;
+      const cat = categories.find(c => c.id === catId) || categories[0];
+      if (!cat) return;
+      const max = (cat.candidates || []).length;
+      await set(ref(db, 'config/broadcast/revealed'), max);
+      showToast(`✦ Todos os ${max} candidatos revelados`);
+      renderBroadcastPreview();
+    };
+
+    window.bcReset = async function () {
+      await set(ref(db, 'config/broadcast/revealed'), 0);
+      showToast('✦ Revelação reiniciada');
+      renderBroadcastPreview();
+    };
+
+    window.saveBroadcast = async function () {
+      const bc = {
+        catId: document.getElementById('bc_catId').value,
+        customLabel: document.getElementById('bc_label').value.trim(),
+        revealed: parseInt(document.getElementById('bc_revealed_count')?.textContent || '0') || config.broadcast?.revealed || 0,
+        showSpokesperson: document.getElementById('bc_showSpoke').checked,
+        spokespersonName: document.getElementById('bc_spokeName').value.trim(),
+        spokespersonRole: document.getElementById('bc_spokeRole').value.trim(),
+        showLiveVotes: document.getElementById('bc_showLive').checked,
+        highlightLeader: document.getElementById('bc_hlLeader').checked,
+      };
+      await set(ref(db, 'config/broadcast'), bc);
+      config.broadcast = bc;
+      showToast('✦ Broadcast actualizado');
+      renderBroadcastPreview();
+    };
+
+    function refreshBroadcastCatSelect(catId) {
+      const sel = document.getElementById('bc_catId');
+      if (sel && catId) sel.value = catId;
+    }
+
+    function renderBroadcastPreview() {
+      const bc = config.broadcast || {};
+      const catId = bc.catId || config.activeCategory || categories[0]?.id;
+      const cat = categories.find(c => c.id === catId) || categories[0];
+      const max = (cat?.candidates || []).length;
+      const revealed = bc.revealed ?? 0;
+      const el = document.getElementById('bc_revealed_count');
+      if (el) el.textContent = revealed;
+      const prog = document.getElementById('bc_prog');
+      if (prog) prog.style.width = max > 0 ? (revealed / max * 100) + '%' : '0%';
+      const progText = document.getElementById('bc_prog_text');
+      if (progText) progText.textContent = `${revealed} / ${max} revelados`;
+      const nextBtn = document.getElementById('bc_next_btn');
+      if (nextBtn) {
+        const next = (cat?.candidates || []).slice().reverse()[revealed];
+        nextBtn.textContent = next ? `▶ Revelar: ${next.name}` : '✓ Todos revelados';
+        nextBtn.disabled = !next;
+      }
+    }
+
+    function populateBroadcastForm(bc) {
+      const o = bc || {};
+      const catSel = document.getElementById('bc_catId');
+      if (catSel) catSel.innerHTML = categories.map(c => `<option value="${c.id}"${c.id === (o.catId || categories[0]?.id) ? ' selected' : ''}>${c.name}</option>`).join('');
+      setVal('bc_label', o.customLabel || '');
+      setCheck('bc_showSpoke', o.showSpokesperson !== false);
+      setVal('bc_spokeName', o.spokespersonName || '');
+      setVal('bc_spokeRole', o.spokespersonRole || '');
+      setCheck('bc_showLive', o.showLiveVotes !== false);
+      setCheck('bc_hlLeader', o.highlightLeader !== false);
+      renderBroadcastPreview();
+    }
+
+    window.selectMode = function (mode, el) {
+      document.getElementById('ov_mode').value = mode;
+      document.querySelectorAll('.ov-mode-btn').forEach(b => b.classList.remove('active'));
+      el.classList.add('active');
+      refreshOverlayUI();
+    };
+
+    window.selectPos = function (pos, el) {
+      document.getElementById('ov_position').value = pos;
+      document.querySelectorAll('.ov-pos-btn').forEach(b => b.classList.remove('active'));
+      el.classList.add('active');
+    };
+
     window.showSection = function (name, el) {
       document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
       document.getElementById('sec_' + name).classList.add('active');
       if (el) el.classList.add('active');
+      if (name === 'overlay') {
+        // refresh category select when entering overlay section
+        populateOverlayForm(config.overlay);
+        populateBroadcastForm(config.broadcast);
+      }
     };
   </script>
 
@@ -710,7 +778,7 @@
       -webkit-font-smoothing: antialiased;
     }
 
-    /* ── AUTH ── */
+    /* AUTH */
     #authWall {
       position: fixed;
       inset: 0;
@@ -783,21 +851,21 @@
 
       0%,
       100% {
-        transform: translateX(0);
+        transform: translateX(0)
       }
 
       20%,
       60% {
-        transform: translateX(-8px);
+        transform: translateX(-8px)
       }
 
       40%,
       80% {
-        transform: translateX(8px);
+        transform: translateX(8px)
       }
     }
 
-    /* ── LAYOUT ── */
+    /* LAYOUT */
     #mainApp {
       display: none;
     }
@@ -807,7 +875,6 @@
       min-height: 100vh;
     }
 
-    /* ── SIDEBAR ── */
     .sidebar {
       width: 240px;
       flex-shrink: 0;
@@ -891,7 +958,6 @@
       text-align: center;
     }
 
-    /* ── MAIN CONTENT ── */
     .main-content {
       flex: 1;
       padding: 32px 36px;
@@ -910,12 +976,12 @@
     @keyframes sectionIn {
       from {
         opacity: 0;
-        transform: translateY(8px);
+        transform: translateY(8px)
       }
 
       to {
         opacity: 1;
-        transform: none;
+        transform: none
       }
     }
 
@@ -943,7 +1009,7 @@
       color: var(--text-muted);
     }
 
-    /* ── CARDS ── */
+    /* CARDS */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -963,7 +1029,7 @@
       opacity: 0.85;
     }
 
-    /* ── VOTE HERO ── */
+    /* VOTE HERO */
     .vote-hero {
       background: linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--accent) 5%, var(--surface)));
       border: 1px solid var(--border);
@@ -1006,11 +1072,11 @@
 
       0%,
       100% {
-        box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 18%, transparent);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 18%, transparent)
       }
 
       50% {
-        box-shadow: 0 0 0 9px color-mix(in srgb, var(--success) 0%, transparent);
+        box-shadow: 0 0 0 9px color-mix(in srgb, var(--success) 0%, transparent)
       }
     }
 
@@ -1033,7 +1099,6 @@
       flex-wrap: wrap;
     }
 
-    /* Toggle */
     .toggle-wrap {
       display: flex;
       align-items: center;
@@ -1099,100 +1164,67 @@
     }
 
     .status-badge.open {
-      background: color-mix(in srgb, var(--success) 15%, transparent);
+      background: color-mix(in srgb, var(--success) 14%, transparent);
       color: var(--success);
-      border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+      border: 1px solid color-mix(in srgb, var(--success) 28%, transparent);
     }
 
     .status-badge.closed {
-      background: color-mix(in srgb, var(--danger) 12%, transparent);
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
       color: var(--danger);
       border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
     }
 
-    /* Session */
-    .session-box {
+    .vote-stats {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px 20px;
-    }
-
-    .session-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .session-info label {
-      font-size: 0.68rem;
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      display: block;
-      margin-bottom: 5px;
-    }
-
-    #sessionIdDisplay {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.76rem;
-      color: var(--accent);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 320px;
-      display: block;
-    }
-
-    .session-sub {
-      font-size: 0.72rem;
-      color: var(--text-muted);
-      margin-top: 3px;
-    }
-
-    /* Stats */
-    .stats-row {
-      display: flex;
-      gap: 14px;
+      gap: 24px;
       flex-wrap: wrap;
       margin-bottom: 18px;
     }
 
     .stat-box {
-      background: var(--surface2);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 16px 20px;
-      flex: 1;
-      min-width: 110px;
+      padding: 16px 22px;
+      min-width: 120px;
     }
 
-    .stat-value {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 1.9rem;
+    .stat-val {
+      font-family: 'Cinzel', serif;
+      font-size: 1.8rem;
+      font-weight: 700;
       color: var(--accent);
-      font-weight: 500;
     }
 
     .stat-label {
-      font-size: 0.68rem;
-      font-weight: 500;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
+      font-size: 0.72rem;
       color: var(--text-muted);
-      margin-top: 4px;
+      margin-top: 2px;
     }
 
-    /* Buttons */
+    .session-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .session-id-display {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      background: var(--surface2);
+      padding: 5px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    /* BUTTONS */
     .btn {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
+      gap: 8px;
       padding: 10px 18px;
       border-radius: 8px;
       border: none;
@@ -1200,117 +1232,150 @@
       font-size: 0.82rem;
       font-weight: 500;
       cursor: pointer;
-      letter-spacing: 0.03em;
-      transition: opacity 0.18s, transform 0.15s, box-shadow 0.18s;
-    }
-
-    .btn:active {
-      transform: scale(0.97);
+      transition: all 0.15s;
+      text-decoration: none;
     }
 
     .btn-primary {
       background: var(--accent);
-      color: #000;
+      color: #07060e;
     }
 
     .btn-primary:hover {
-      opacity: 0.9;
-      box-shadow: 0 6px 20px -4px color-mix(in srgb, var(--accent) 40%, transparent);
+      filter: brightness(1.12);
     }
 
     .btn-secondary {
       background: var(--surface2);
+      color: var(--text);
       border: 1px solid var(--border);
-      color: var(--text-muted);
     }
 
     .btn-secondary:hover {
-      color: var(--text);
+      background: var(--border);
     }
 
     .btn-danger {
-      background: color-mix(in srgb, var(--danger) 12%, transparent);
-      border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
       color: var(--danger);
+      border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
     }
 
     .btn-danger:hover {
-      background: color-mix(in srgb, var(--danger) 18%, transparent);
+      background: color-mix(in srgb, var(--danger) 22%, transparent);
     }
 
-    .btn-outline {
-      background: transparent;
-      border: 1px solid var(--border);
-      color: var(--text-muted);
+    .btn-sm {
+      padding: 7px 13px;
+      font-size: 0.78rem;
     }
 
-    .btn-outline:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-
-    /* Forms */
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-      margin-bottom: 14px;
-    }
-
-    .form-group {
+    .btn-icon {
+      width: 30px;
+      height: 30px;
       display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 14px;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
     }
 
-    label {
+    .btn-icon:hover {
+      background: var(--border);
+      color: var(--text);
+    }
+
+    .btn-icon.danger:hover {
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
+      color: var(--danger);
+      border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+    }
+
+    /* OBS BUTTON */
+    .obs-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
       font-size: 0.72rem;
       font-weight: 500;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--text-muted);
+      transition: all 0.15s;
     }
 
-    input[type="text"],
-    input[type="password"],
-    textarea,
-    select {
+    .obs-btn:hover {
+      background: color-mix(in srgb, #00bcd4 14%, transparent);
+      color: #00bcd4;
+      border-color: color-mix(in srgb, #00bcd4 28%, transparent);
+    }
+
+    .obs-btn--active {
+      background: color-mix(in srgb, #00bcd4 18%, transparent) !important;
+      color: #00bcd4 !important;
+      border-color: color-mix(in srgb, #00bcd4 40%, transparent) !important;
+    }
+
+    /* FORMS */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.76rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 7px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .form-group input[type="text"],
+    .form-group input[type="password"],
+    .form-group textarea {
+      width: 100%;
+      padding: 11px 14px;
       background: var(--surface2);
       border: 1px solid var(--border);
       border-radius: 8px;
       color: var(--text);
-      padding: 10px 14px;
       font-family: 'Jost', sans-serif;
       font-size: 0.88rem;
       outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
-      width: 100%;
-    }
-
-    input:focus,
-    textarea:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
-    }
-
-    textarea {
+      transition: border-color 0.2s;
       resize: vertical;
-      min-height: 90px;
     }
 
-    /* Color inputs */
+    .form-group input:focus,
+    .form-group textarea:focus {
+      border-color: var(--accent);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
     .color-input-wrap {
       display: flex;
-      gap: 8px;
       align-items: center;
+      gap: 8px;
     }
 
     .color-input-wrap input[type="color"] {
-      width: 42px;
-      height: 40px;
+      width: 36px;
+      height: 36px;
+      border-radius: 6px;
       border: 1px solid var(--border);
-      border-radius: 8px;
       background: var(--surface2);
       cursor: pointer;
       padding: 2px;
@@ -1319,27 +1384,313 @@
 
     .color-input-wrap input[type="text"] {
       flex: 1;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
     }
 
-    /* ── TEMPLATES ── */
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    /* CATEGORIES */
+    .categories-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .cat-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .cat-item:hover {
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+
+    .cat-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cat-drag-handle {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      cursor: grab;
+      flex-shrink: 0;
+      opacity: 0.4;
+    }
+
+    .cat-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .cat-name {
+      font-family: 'Cinzel', serif;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .cat-meta {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .cat-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .cat-candidates {
+      padding: 10px 16px;
+    }
+
+    .cat-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .cand-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+    }
+
+    .cand-row:last-child {
+      border-bottom: none;
+    }
+
+    .empty-cands {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      padding: 10px 0;
+      font-style: italic;
+    }
+
+    .c-num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      width: 22px;
+      flex-shrink: 0;
+    }
+
+    .c-thumb {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: var(--border);
+    }
+
+    .c-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .c-initial {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Cinzel', serif;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border-radius: 6px;
+    }
+
+    .c-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .c-name {
+      font-size: 0.84rem;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .c-sub {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .c-votes-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+      padding: 3px 8px;
+      border-radius: 100px;
+      white-space: nowrap;
+    }
+
+    .c-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .empty-list {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 32px 0;
+      font-style: italic;
+    }
+
+    /* RESULTS */
+    .results-cat-section {
+      margin-bottom: 24px;
+    }
+
+    .results-cat-title {
+      font-family: 'Cinzel', serif;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .results-cat-title span {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    .result-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+    }
+
+    .result-row:last-child {
+      border-bottom: none;
+    }
+
+    .result-row--leader {
+      background: color-mix(in srgb, var(--accent) 5%, transparent);
+      margin: 0 -4px;
+      padding-left: 4px;
+      padding-right: 4px;
+      border-radius: 6px;
+    }
+
+    .result-rank {
+      width: 28px;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+      text-align: center;
+    }
+
+    .result-thumb {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: var(--border);
+    }
+
+    .result-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .result-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .result-name {
+      font-size: 0.82rem;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .result-bar-wrap {
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .result-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .result-count {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--text);
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .result-count span {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.68rem;
+    }
+
+    /* TEMPLATES */
     .template-search-bar {
       display: flex;
-      gap: 10px;
-      margin-bottom: 16px;
       align-items: center;
-      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 14px;
     }
 
     .template-search-bar input {
       flex: 1;
-      min-width: 180px;
-      padding: 10px 16px;
+      padding: 9px 14px;
       background: var(--surface2);
       border: 1px solid var(--border);
       border-radius: 8px;
       color: var(--text);
       font-family: 'Jost', sans-serif;
-      font-size: 0.84rem;
+      font-size: 0.85rem;
       outline: none;
       transition: border-color 0.2s;
     }
@@ -1358,32 +1709,28 @@
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
     }
 
     .cat-tab {
-      padding: 6px 14px;
+      padding: 5px 14px;
       border-radius: 100px;
       background: var(--surface2);
       border: 1px solid var(--border);
       color: var(--text-muted);
-      font-family: 'Jost', sans-serif;
-      font-size: 0.74rem;
-      font-weight: 500;
+      font-size: 0.76rem;
       cursor: pointer;
       transition: all 0.15s;
-      white-space: nowrap;
     }
 
     .cat-tab:hover {
-      border-color: var(--accent);
       color: var(--text);
     }
 
     .cat-tab.active {
-      background: var(--accent-dim);
-      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
       color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 28%, transparent);
     }
 
     #templateGrid {
@@ -1392,432 +1739,159 @@
       gap: 10px;
     }
 
-    .no-results {
-      text-align: center;
-      color: var(--text-muted);
-      padding: 40px;
-      font-size: 0.85rem;
-      grid-column: 1 / -1;
-    }
-
     .template-card {
+      background: var(--tc-bg, #07060e);
+      border: 1px solid color-mix(in srgb, var(--tc-accent, #c4973a) 18%, transparent);
       border-radius: 10px;
-      border: 1px solid var(--border);
       overflow: hidden;
       cursor: pointer;
-      transition: border-color 0.2s, transform 0.18s, box-shadow 0.2s;
-      background: var(--surface2);
+      transition: all 0.2s;
     }
 
     .template-card:hover {
-      border-color: color-mix(in srgb, var(--accent) 50%, transparent);
       transform: translateY(-2px);
-      box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.5);
+      border-color: color-mix(in srgb, var(--tc-accent, #c4973a) 50%, transparent);
     }
 
     .template-card.selected {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+      outline: 2px solid var(--tc-accent, #c4973a);
     }
 
     .tc-preview {
-      background: var(--tc-bg, #07060e);
-      padding: 16px 14px 12px;
+      padding: 14px 12px 10px;
       display: flex;
       align-items: center;
-      gap: 10px;
-      position: relative;
-      border-bottom: 1px solid color-mix(in srgb, var(--tc-accent, #c4973a) 18%, transparent);
+      gap: 8px;
     }
 
     .tc-dot {
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
-      background: var(--tc-accent, #c4973a);
+      background: var(--tc-accent);
       flex-shrink: 0;
-      box-shadow: 0 0 8px var(--tc-accent, #c4973a);
     }
 
     .tc-lines {
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 4px;
     }
 
     .tc-line {
-      border-radius: 3px;
-      background: var(--tc-accent, #c4973a);
-      opacity: 0.45;
+      height: 5px;
+      border-radius: 2px;
+      background: color-mix(in srgb, var(--tc-accent) 30%, transparent);
     }
 
     .tc-line--title {
-      height: 5px;
-      width: 70%;
-      opacity: 0.65;
+      width: 60%;
     }
 
     .tc-line--sub {
-      height: 3px;
-      width: 45%;
+      width: 40%;
     }
 
     .tc-swatch {
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.2rem;
-      background: color-mix(in srgb, var(--tc-accent, #c4973a) 12%, transparent);
-      border: 1px solid color-mix(in srgb, var(--tc-accent, #c4973a) 22%, transparent);
-      flex-shrink: 0;
+      font-size: 1.3rem;
     }
 
     .tc-info {
-      padding: 10px 12px 12px;
+      padding: 0 12px 12px;
     }
 
     .tc-name {
-      font-size: 0.78rem;
+      font-size: 0.76rem;
       font-weight: 500;
-      color: var(--text);
-      margin-bottom: 3px;
+      color: var(--tc-text, #ede9e0);
+      margin-bottom: 2px;
     }
 
     .tc-cat {
-      font-size: 0.65rem;
-      color: var(--text-muted);
-      letter-spacing: 0.04em;
+      font-size: 0.64rem;
+      color: var(--tc-accent);
+      opacity: 0.7;
     }
 
-    /* ── THEME SECTION ── */
-    .theme-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 14px;
+    /* THEME PREVIEW */
+    .theme-preview-wrap {
       margin-bottom: 18px;
     }
 
-    /* Live preview */
-    .theme-preview-wrap {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 20px;
-    }
-
     .theme-preview-label {
-      font-size: 0.68rem;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
+      font-size: 0.72rem;
       color: var(--text-muted);
-      margin-bottom: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
     }
 
     #themePreview {
+      background: #07060e;
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid var(--border);
       --pa: #c4973a;
       --pa2: #e8d5a3;
       --pt: #ede9e0;
-      --pcb: #100f1e;
-      border-radius: 10px;
-      padding: 20px 24px;
-      position: relative;
-      overflow: hidden;
-      transition: background 0.3s;
-    }
-
-    #themePreview::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, var(--pa) 40%, var(--pa2) 60%, transparent);
+      --pcb: #0e0d1c;
     }
 
     .tp-title {
       font-family: 'Cinzel', serif;
-      font-size: 1.4rem;
+      font-size: 1rem;
       font-weight: 700;
-      color: var(--pt);
-      margin-bottom: 6px;
-      text-shadow: 0 0 30px color-mix(in srgb, var(--pa) 30%, transparent);
+      color: var(--pa);
+      margin-bottom: 4px;
     }
 
     .tp-sub {
-      font-size: 0.78rem;
-      font-style: italic;
-      color: var(--pa);
-      margin-bottom: 16px;
+      font-size: 0.72rem;
+      color: color-mix(in srgb, var(--pt) 50%, transparent);
+      margin-bottom: 14px;
     }
 
     .tp-cards {
       display: flex;
-      gap: 10px;
+      gap: 8px;
     }
 
     .tp-card {
-      background: var(--pcb);
-      border: 1px solid color-mix(in srgb, var(--pa) 25%, transparent);
-      border-radius: 8px;
-      padding: 12px 14px;
       flex: 1;
+      background: var(--pcb);
+      border: 1px solid color-mix(in srgb, var(--pa) 16%, transparent);
+      border-radius: 8px;
+      padding: 10px;
     }
 
     .tp-card-name {
-      font-size: 0.78rem;
-      font-weight: 500;
+      font-size: 0.68rem;
       color: var(--pt);
       margin-bottom: 6px;
     }
 
     .tp-card-btn {
       display: inline-block;
-      padding: 5px 12px;
-      background: transparent;
-      border: 1px solid color-mix(in srgb, var(--pa) 40%, transparent);
-      border-radius: 5px;
-      font-size: 0.68rem;
-      color: var(--pa);
-      cursor: pointer;
-    }
-
-    /* ── CANDIDATES ── */
-    .candidates-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 16px;
-    }
-
-    .candidates-toolbar p {
-      color: var(--text-muted);
-      font-size: 0.8rem;
-    }
-
-    #candidateList {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .empty-list {
-      text-align: center;
-      color: var(--text-muted);
-      padding: 48px;
-      font-size: 0.85rem;
-    }
-
-    .candidate-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 14px;
-      transition: border-color 0.15s;
-    }
-
-    .candidate-item:hover {
-      border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-    }
-
-    .c-num {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.68rem;
-      color: var(--text-muted);
-      width: 24px;
-      text-align: center;
-    }
-
-    .c-thumb {
-      width: 42px;
-      height: 42px;
-      border-radius: 8px;
-      overflow: hidden;
-      flex-shrink: 0;
-      background: var(--surface);
-    }
-
-    .c-thumb img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    .c-initial {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: 'Cinzel', serif;
-      font-weight: 700;
-      color: var(--accent);
-    }
-
-    .c-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .c-name {
-      font-weight: 500;
-      font-size: 0.9rem;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .c-sub {
-      color: var(--text-muted);
-      font-size: 0.74rem;
-      margin-top: 2px;
-    }
-
-    .c-votes-badge {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.68rem;
-      color: var(--accent);
-      background: var(--accent-dim);
-      border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-      padding: 3px 9px;
-      border-radius: 5px;
-      white-space: nowrap;
-    }
-
-    .c-actions {
-      display: flex;
-      gap: 5px;
-    }
-
-    .btn-icon {
-      background: none;
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      width: 32px;
-      height: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      color: var(--text-muted);
-      transition: all 0.15s;
-    }
-
-    .btn-icon:hover {
-      background: var(--surface);
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-
-    .btn-icon.danger:hover {
-      border-color: var(--danger);
-      background: color-mix(in srgb, var(--danger) 10%, transparent);
-      color: var(--danger);
-    }
-
-    /* Results */
-    #resultsArea {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .result-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 14px;
-    }
-
-    .result-row--leader {
-      border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-      background: color-mix(in srgb, var(--accent) 4%, var(--surface2));
-    }
-
-    .result-rank {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      width: 28px;
-      text-align: center;
-      flex-shrink: 0;
-    }
-
-    .result-thumb {
-      width: 40px;
-      height: 40px;
-      border-radius: 7px;
-      overflow: hidden;
-      flex-shrink: 0;
-      background: var(--surface);
-    }
-
-    .result-thumb img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    .result-info {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .result-name {
-      font-weight: 500;
-      font-size: 0.88rem;
-      margin-bottom: 7px;
-    }
-
-    .result-bar-wrap {
-      height: 4px;
-      background: var(--border);
+      background: var(--pa);
+      color: #07060e;
+      font-size: 0.6rem;
+      font-weight: 600;
+      padding: 3px 8px;
       border-radius: 4px;
     }
 
-    .result-bar {
-      height: 100%;
-      background: var(--accent);
-      border-radius: 4px;
-      transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-      min-width: 2px;
-    }
-
-    .result-count {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.88rem;
-      white-space: nowrap;
-    }
-
-    .result-count span {
-      color: var(--text-muted);
-      font-size: 0.72rem;
-      margin-left: 4px;
-    }
-
-    /* ── MODAL ── */
+    /* MODAL */
     .modal-overlay {
-      display: none;
       position: fixed;
       inset: 0;
-      z-index: 100;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(8px);
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 300;
+      display: none;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 16px;
+      backdrop-filter: blur(4px);
     }
 
     .modal-overlay.show {
@@ -1827,101 +1901,302 @@
     .modal-box {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 32px;
+      border-radius: 14px;
+      padding: 28px;
       width: 100%;
-      max-width: 500px;
+      max-width: 460px;
       max-height: 90vh;
       overflow-y: auto;
-      animation: modalIn 0.22s ease;
-    }
-
-    @keyframes modalIn {
-      from {
-        opacity: 0;
-        transform: translateY(14px);
-      }
-
-      to {
-        opacity: 1;
-        transform: none;
-      }
     }
 
     .modal-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 24px;
+      margin-bottom: 22px;
     }
 
     .modal-header h3 {
       font-family: 'Cinzel', serif;
       font-size: 1rem;
-      font-weight: 600;
+      font-weight: 700;
     }
 
     .modal-close {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 1.3rem;
-      cursor: pointer;
-      padding: 4px 8px;
+      width: 28px;
+      height: 28px;
       border-radius: 6px;
-    }
-
-    .modal-close:hover {
-      color: var(--text);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .modal-footer {
       display: flex;
-      gap: 10px;
       justify-content: flex-end;
-      margin-top: 24px;
+      gap: 10px;
+      margin-top: 22px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
     }
 
     .photo-upload-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 18px;
       border: 2px dashed var(--border);
       border-radius: 10px;
-      padding: 24px;
-      text-align: center;
       cursor: pointer;
       transition: border-color 0.2s;
-      margin-bottom: 14px;
+      text-align: center;
     }
 
     .photo-upload-area:hover {
       border-color: var(--accent);
     }
 
-    .photo-upload-area input {
+    .photo-upload-area input[type="file"] {
       display: none;
-    }
-
-    #c_photoPreview {
-      width: 80px;
-      height: 80px;
-      border-radius: 10px;
-      object-fit: cover;
-      margin: 10px auto 0;
-      display: none;
-      border: 1px solid var(--border);
     }
 
     .upload-hint {
+      font-size: 0.76rem;
       color: var(--text-muted);
-      font-size: 0.8rem;
-      margin-top: 8px;
       line-height: 1.5;
     }
 
-    .upload-hint strong {
+    #c_photoPreview {
+      max-width: 100px;
+      max-height: 100px;
+      border-radius: 8px;
+      object-fit: cover;
+      display: none;
+    }
+
+    /* OVERLAY */
+    .ov-control-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .ov-control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .ov-control-label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .ov-control-label small {
+      display: block;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+
+    .ov-mode-btns {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+
+    .ov-mode-btn {
+      flex: 1;
+      min-width: 110px;
+      padding: 14px 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+    }
+
+    .ov-mode-btn:hover {
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+
+    .ov-mode-btn.active {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border-color: var(--accent);
+    }
+
+    .ov-mode-btn .ov-mode-icon {
+      font-size: 1.5rem;
+      margin-bottom: 6px;
+    }
+
+    .ov-mode-btn .ov-mode-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .ov-mode-btn .ov-mode-desc {
+      font-size: 0.64rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    .ov-pos-btns {
+      display: flex;
+      gap: 8px;
+    }
+
+    .ov-pos-btn {
+      flex: 1;
+      padding: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+      font-size: 0.78rem;
+      transition: all 0.15s;
+    }
+
+    .ov-pos-btn:hover {
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      color: var(--text);
+    }
+
+    .ov-pos-btn.active {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border-color: var(--accent);
       color: var(--accent);
     }
 
-    /* Toast */
+    .ov-url-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .ov-url-label {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .ov-url-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--accent);
+      flex: 1;
+    }
+
+    .ov-live-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ov-live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .ov-live-dot.on {
+      background: #4fdb82;
+      box-shadow: 0 0 0 3px color-mix(in srgb, #4fdb82 20%, transparent);
+      animation: heroPulse 2.5s ease infinite;
+    }
+
+
+    /* BROADCAST */
+    .bc-reveal-bar {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 22px;
+      margin-bottom: 14px;
+    }
+
+    .bc-prog-wrap {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 12px 0 6px;
+    }
+
+    #bc_prog {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #fff));
+      border-radius: 4px;
+      width: 0;
+      transition: width .5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .bc-reveal-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .btn-reveal {
+      background: var(--accent);
+      color: #07060e;
+      font-size: .88rem;
+      font-weight: 700;
+      padding: 13px 22px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-family: 'Jost', sans-serif;
+      transition: filter .15s;
+      flex: 1;
+      text-align: center;
+    }
+
+    .btn-reveal:hover {
+      filter: brightness(1.12);
+    }
+
+    .btn-reveal:disabled {
+      opacity: .35;
+      cursor: not-allowed;
+      filter: none;
+    }
+
+    .bc-spoke-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    /* TOAST */
     .toast {
       position: fixed;
       bottom: 24px;
@@ -1929,41 +2204,19 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-left: 3px solid var(--accent);
-      padding: 12px 22px;
-      border-radius: 10px;
-      font-size: 0.87rem;
-      z-index: 500;
-      transform: translateX(130%);
-      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
-      color: var(--accent);
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-size: 0.82rem;
+      z-index: 1000;
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: none;
     }
 
     .toast.show {
-      transform: translateX(0);
-    }
-
-    input[readonly] {
-      color: var(--text-muted);
-      cursor: default;
-    }
-
-    @media (max-width: 720px) {
-      .sidebar {
-        display: none;
-      }
-
-      .main-content {
-        padding: 20px;
-      }
-
-      .form-row {
-        grid-template-columns: 1fr;
-      }
-
-      #templateGrid {
-        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-      }
+      transform: translateY(0);
+      opacity: 1;
     }
   </style>
 </head>
@@ -1971,13 +2224,13 @@
 <body>
 
   <!-- AUTH WALL -->
-  <div id="authWall" style="display:none">
+  <div id="authWall" style="display:flex">
     <div class="auth-box">
       <div class="auth-logo">GRUPO ARMINDO</div>
-      <h2>Admin Panel</h2>
-      <p>Introduz a password para aceder ao painel de controlo.</p>
-      <p id="authError">Password incorreta.</p>
-      <input type="password" id="passInput" placeholder="••••••••" autocomplete="current-password" />
+      <h2>Admin</h2>
+      <p>Acesso restrito à equipa de produção</p>
+      <input type="password" id="passInput" placeholder="Palavra-passe…" />
+      <div id="authError">Palavra-passe incorrecta</div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">Entrar</button>
     </div>
   </div>
@@ -1987,40 +2240,59 @@
     <div class="admin-layout">
 
       <!-- SIDEBAR -->
-      <aside class="sidebar">
-        <div class="sidebar-logo">VOTE ADMIN<span>Grupo Armindo</span></div>
+      <nav class="sidebar">
+        <div class="sidebar-logo">ADMIN<span>Grupo Armindo Votação</span></div>
         <div class="nav-section">
-          <div class="nav-label">Controlo</div>
-          <a class="nav-item active" onclick="showSection('control',this)"><span class="icon">⚡</span> Votação</a>
-          <a class="nav-item" onclick="showSection('results',this)"><span class="icon">📊</span> Resultados</a>
+          <div class="nav-label">Principal</div>
+          <div class="nav-item active" onclick="showSection('voting', this)">
+            <span class="icon">⚡</span> Votação
+          </div>
+          <div class="nav-item" onclick="showSection('candidates', this)">
+            <span class="icon">👥</span> Categorias
+          </div>
+          <div class="nav-item" onclick="showSection('results', this)">
+            <span class="icon">📊</span> Resultados
+          </div>
+          <div class="nav-item" onclick="showSection('broadcast', this)">
+            <span class="icon">🎬</span> Broadcast
+          </div>
+          <div class="nav-item" onclick="showSection('overlay', this)">
+            <span class="icon">📺</span> Overlay OBS
+          </div>
         </div>
         <div class="nav-section">
-          <div class="nav-label">Configuração</div>
-          <a class="nav-item" onclick="showSection('event',this)"><span class="icon">📝</span> Evento</a>
-          <a class="nav-item" onclick="showSection('candidates',this)"><span class="icon">👥</span> Candidatos</a>
-          <a class="nav-item" onclick="showSection('templates',this)"><span class="icon">🎨</span> Templates <span
-              style="font-size:0.62rem;background:var(--accent-dim);color:var(--accent);padding:2px 7px;border-radius:100px;margin-left:4px;border:1px solid color-mix(in srgb,var(--accent) 20%,transparent)">200</span></a>
-          <a class="nav-item" onclick="showSection('theme',this)"><span class="icon">🖌️</span> Tema Manual</a>
+          <div class="nav-label">Aparência</div>
+          <div class="nav-item" onclick="showSection('templates', this)">
+            <span class="icon">🎨</span> Templates
+          </div>
+          <div class="nav-item" onclick="showSection('theme', this)">
+            <span class="icon">🖌️</span> Tema Manual
+          </div>
+          <div class="nav-item" onclick="showSection('event', this)">
+            <span class="icon">📋</span> Evento
+          </div>
         </div>
-      </aside>
+      </nav>
 
       <!-- MAIN -->
       <main class="main-content">
 
-        <!-- ── VOTAÇÃO ── -->
-        <div id="sec_control" class="section active">
+        <!-- VOTAÇÃO -->
+        <div id="sec_voting" class="section active">
           <div class="page-header">
             <div>
-              <h1>Controlo de Votação</h1>
-              <p>Liga/desliga a votação em tempo real</p>
+              <h1>Votação</h1>
+              <p>Controla o estado da votação em tempo real</p>
             </div>
           </div>
+
           <div class="vote-hero">
             <div class="vote-hero-left">
               <div class="hero-dot closed" id="heroStatusDot"></div>
               <div class="vote-hero-info">
                 <h2>Estado da Votação</h2>
-                <p>Actualiza instantaneamente para todos os utilizadores</p>
+                <p>ID da sessão: <span id="sessionIdDisplay"
+                    style="font-family:'JetBrains Mono',monospace;font-size:0.75rem">—</span></p>
               </div>
             </div>
             <div class="vote-hero-right">
@@ -2035,18 +2307,22 @@
               </div>
             </div>
           </div>
+
+          <div class="vote-stats">
+            <div class="stat-box">
+              <div class="stat-val" id="totalVotes">0</div>
+              <div class="stat-label">Votos Totais</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-val" id="candidateCount">0</div>
+              <div class="stat-label">Candidatos / Categorias</div>
+            </div>
+          </div>
+
           <div class="card">
-            <div class="card-title">Sessão de Votação</div>
-            <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6">Cada sessão tem um
-              ID único. Quando crias uma nova sessão, <strong style="color:var(--text)">todos os utilizadores podem
-                votar novamente</strong>.</p>
-            <div class="session-box">
-              <div class="session-info">
-                <label>ID da Sessão Actual</label>
-                <span id="sessionIdDisplay">—</span>
-                <span class="session-sub">O voto de cada utilizador está ligado a este ID</span>
-              </div>
-              <button class="btn btn-primary" onclick="newSession()">
+            <div class="card-title">Gestão de Sessão</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-secondary" onclick="newSession()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                   stroke-linecap="round">
                   <polyline points="23 4 23 10 17 10" />
@@ -2054,111 +2330,73 @@
                 </svg>
                 Nova Sessão
               </button>
+              <button class="btn btn-danger" onclick="resetVotes()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                </svg>
+                Apagar Votos
+              </button>
             </div>
-          </div>
-          <div class="card">
-            <div class="card-title">Votos</div>
-            <div class="stats-row">
-              <div class="stat-box">
-                <div class="stat-value" id="totalVotes">0</div>
-                <div class="stat-label">Total de Votos</div>
-              </div>
-            </div>
-            <button class="btn btn-danger" onclick="resetVotes()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                <path d="M10 11v6" />
-                <path d="M14 11v6" />
-                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-              </svg>
-              Apagar Votos da Sessão
-            </button>
+            <p style="margin-top:12px;font-size:0.76rem;color:var(--text-muted)">Nova sessão permite que todos os
+              utilizadores votem novamente. Apagar votos limpa apenas os contadores da sessão atual.</p>
           </div>
         </div>
 
-        <!-- ── RESULTADOS ── -->
+        <!-- CATEGORIAS & CANDIDATOS -->
+        <div id="sec_candidates" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Categorias</h1>
+              <p>Cria categorias (ex: Melhor Ator, Melhor Filme) e adiciona candidatos a cada uma</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="categories-toolbar">
+              <p id="candidateCount" style="font-size:0.82rem;color:var(--text-muted)">0 candidatos</p>
+              <button class="btn btn-primary" onclick="openAddCategory()">+ Nova Categoria</button>
+            </div>
+            <div id="categoryList"></div>
+          </div>
+        </div>
+
+        <!-- RESULTADOS -->
         <div id="sec_results" class="section">
           <div class="page-header">
             <div>
               <h1>Resultados</h1>
-              <p>Actualizado em tempo real</p>
+              <p>Resultados em tempo real por categoria</p>
             </div>
           </div>
           <div class="card">
-            <div class="card-title">Rankings da Sessão Actual</div>
-            <div id="resultsArea">
-              <div class="empty-list">A carregar...</div>
-            </div>
+            <div id="resultsArea"></div>
           </div>
         </div>
 
-        <!-- ── EVENTO ── -->
-        <div id="sec_event" class="section">
-          <div class="page-header">
-            <div>
-              <h1>Informação do Evento</h1>
-              <p>Título, subtítulo e descrição exibidos na página de voto</p>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-title">Detalhes</div>
-            <div class="form-group"><label>Título do Evento</label><input type="text" id="f_title"
-                placeholder="ex: Festival da Canção 2025" /></div>
-            <div class="form-group"><label>Subtítulo</label><input type="text" id="f_subtitle"
-                placeholder="ex: Vota no teu favorito!" /></div>
-            <div class="form-group"><label>Descrição (opcional)</label><textarea id="f_description"
-                placeholder="Texto adicional para o público..."></textarea></div>
-            <div class="form-group"><label>ID da Sessão (só leitura)</label><input type="text" id="f_sessionId" readonly
-                placeholder="Gera uma sessão no separador Votação" /></div>
-            <button class="btn btn-primary" onclick="saveEventInfo()">Guardar</button>
-          </div>
-        </div>
-
-        <!-- ── CANDIDATOS ── -->
-        <div id="sec_candidates" class="section">
-          <div class="page-header">
-            <div>
-              <h1>Candidatos</h1>
-              <p>Gere os candidatos da votação actual</p>
-            </div>
-          </div>
-          <div class="card">
-            <div class="candidates-toolbar">
-              <p id="candidateCount">0 candidatos</p>
-              <button class="btn btn-primary" onclick="openAddCandidate()">+ Adicionar</button>
-            </div>
-            <div id="candidateList"></div>
-          </div>
-        </div>
-
-        <!-- ── TEMPLATES ── -->
+        <!-- TEMPLATES -->
         <div id="sec_templates" class="section">
           <div class="page-header">
             <div>
               <h1>Templates</h1>
-              <p>200 templates prontos para todo o tipo de eventos</p>
+              <p>Temas prontos para carregar</p>
             </div>
           </div>
           <div class="card">
-            <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:18px;line-height:1.65">
-              Clica num template para pré-carregar as cores e informações. Depois vai a <strong
-                style="color:var(--text)">Tema Manual</strong> para ajustar e guardar, ou vai a <strong
-                style="color:var(--text)">Evento</strong> para personalizar os textos.
-            </p>
+            <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:18px;line-height:1.65">Clica num template
+              para aplicar o tema e informação do evento.</p>
             <div class="template-search-bar">
-              <input type="text" id="templateSearch"
-                placeholder="🔍  Pesquisar templates… (ex: Eurovision, Futebol, Natal)"
+              <input type="text" id="templateSearch" placeholder="🔍  Pesquisar templates…"
                 oninput="searchTemplates(this.value)" />
-              <span class="template-count">200 templates</span>
+              <span class="template-count">0 templates</span>
             </div>
             <div id="templateCats"></div>
             <div id="templateGrid"></div>
           </div>
         </div>
 
-        <!-- ── TEMA MANUAL ── -->
+        <!-- TEMA MANUAL -->
         <div id="sec_theme" class="section">
           <div class="page-header">
             <div>
@@ -2166,8 +2404,6 @@
               <p>Personaliza cada cor individualmente</p>
             </div>
           </div>
-
-          <!-- Live preview -->
           <div class="theme-preview-wrap">
             <div class="theme-preview-label">Pré-visualização ao vivo</div>
             <div id="themePreview">
@@ -2189,56 +2425,38 @@
               </div>
             </div>
           </div>
-
           <div class="card">
             <div class="card-title">Cores</div>
             <div class="theme-grid">
-              <div class="form-group">
-                <label>Fundo Principal</label>
-                <div class="color-input-wrap">
-                  <input type="color" id="t_bg_picker" oninput="syncTextField('t_bg_picker','t_bg')" />
-                  <input type="text" id="t_bg" placeholder="#07060e" oninput="syncColorPicker('t_bg','t_bg_picker')" />
-                </div>
+              <div class="form-group"><label>Fundo Principal</label>
+                <div class="color-input-wrap"><input type="color" id="t_bg_picker"
+                    oninput="syncTextField('t_bg_picker','t_bg')" /><input type="text" id="t_bg" placeholder="#07060e"
+                    oninput="syncColorPicker('t_bg','t_bg_picker')" /></div>
               </div>
-              <div class="form-group">
-                <label>Superfície</label>
-                <div class="color-input-wrap">
-                  <input type="color" id="t_surface_picker" oninput="syncTextField('t_surface_picker','t_surface')" />
-                  <input type="text" id="t_surface" placeholder="#0d0c1a"
-                    oninput="syncColorPicker('t_surface','t_surface_picker')" />
-                </div>
+              <div class="form-group"><label>Superfície</label>
+                <div class="color-input-wrap"><input type="color" id="t_surface_picker"
+                    oninput="syncTextField('t_surface_picker','t_surface')" /><input type="text" id="t_surface"
+                    placeholder="#0d0c1a" oninput="syncColorPicker('t_surface','t_surface_picker')" /></div>
               </div>
-              <div class="form-group">
-                <label>Cor de Destaque</label>
-                <div class="color-input-wrap">
-                  <input type="color" id="t_accent_picker" oninput="syncTextField('t_accent_picker','t_accent')" />
-                  <input type="text" id="t_accent" placeholder="#c4973a"
-                    oninput="syncColorPicker('t_accent','t_accent_picker')" />
-                </div>
+              <div class="form-group"><label>Cor de Destaque</label>
+                <div class="color-input-wrap"><input type="color" id="t_accent_picker"
+                    oninput="syncTextField('t_accent_picker','t_accent')" /><input type="text" id="t_accent"
+                    placeholder="#c4973a" oninput="syncColorPicker('t_accent','t_accent_picker')" /></div>
               </div>
-              <div class="form-group">
-                <label>Destaque 2</label>
-                <div class="color-input-wrap">
-                  <input type="color" id="t_accent2_picker" oninput="syncTextField('t_accent2_picker','t_accent2')" />
-                  <input type="text" id="t_accent2" placeholder="#e8d5a3"
-                    oninput="syncColorPicker('t_accent2','t_accent2_picker')" />
-                </div>
+              <div class="form-group"><label>Destaque 2</label>
+                <div class="color-input-wrap"><input type="color" id="t_accent2_picker"
+                    oninput="syncTextField('t_accent2_picker','t_accent2')" /><input type="text" id="t_accent2"
+                    placeholder="#e8d5a3" oninput="syncColorPicker('t_accent2','t_accent2_picker')" /></div>
               </div>
-              <div class="form-group">
-                <label>Texto</label>
-                <div class="color-input-wrap">
-                  <input type="color" id="t_text_picker" oninput="syncTextField('t_text_picker','t_text')" />
-                  <input type="text" id="t_text" placeholder="#ede9e0"
-                    oninput="syncColorPicker('t_text','t_text_picker')" />
-                </div>
+              <div class="form-group"><label>Texto</label>
+                <div class="color-input-wrap"><input type="color" id="t_text_picker"
+                    oninput="syncTextField('t_text_picker','t_text')" /><input type="text" id="t_text"
+                    placeholder="#ede9e0" oninput="syncColorPicker('t_text','t_text_picker')" /></div>
               </div>
-              <div class="form-group">
-                <label>Fundo Cartão</label>
-                <div class="color-input-wrap">
-                  <input type="color" id="t_cardBg_picker" oninput="syncTextField('t_cardBg_picker','t_cardBg')" />
-                  <input type="text" id="t_cardBg" placeholder="#0e0d1c"
-                    oninput="syncColorPicker('t_cardBg','t_cardBg_picker')" />
-                </div>
+              <div class="form-group"><label>Fundo Cartão</label>
+                <div class="color-input-wrap"><input type="color" id="t_cardBg_picker"
+                    oninput="syncTextField('t_cardBg_picker','t_cardBg')" /><input type="text" id="t_cardBg"
+                    placeholder="#0e0d1c" oninput="syncColorPicker('t_cardBg','t_cardBg_picker')" /></div>
               </div>
             </div>
             <button class="btn btn-primary" onclick="saveTheme()">
@@ -2253,7 +2471,331 @@
           </div>
         </div>
 
+
+        <!-- BROADCAST / OBS TELA COMPLETA -->
+        <div id="sec_broadcast" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Broadcast</h1>
+              <p>Controla a tela de transmissão ao vivo (obs.html)</p>
+            </div>
+          </div>
+
+          <!-- URL -->
+          <div class="ov-url-box">
+            <span class="ov-url-label">URL da Tela</span>
+            <span class="ov-url-val">obs.html</span>
+            <button class="btn btn-secondary btn-sm"
+              onclick="navigator.clipboard.writeText(location.origin+'/obs.html').then(()=>showToast('✦ URL copiado'))">Copiar</button>
+          </div>
+
+          <!-- REVELAÇÃO -->
+          <div class="card">
+            <div class="card-title">Revelação de Resultados</div>
+            <p style="font-size:.78rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6">Os resultados são
+              revelados <strong style="color:var(--text)">candidato a candidato</strong>, do último para o primeiro
+              lugar, como numa cerimónia de prémios. Clica em "Revelar Próximo" para mostrar cada candidato em cena.</p>
+
+            <div class="bc-reveal-bar">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:.78rem;font-weight:500">Progresso da Revelação</span>
+                <span id="bc_prog_text"
+                  style="font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--text-muted)">0 / 0
+                  revelados</span>
+              </div>
+              <div class="bc-prog-wrap">
+                <div id="bc_prog"></div>
+              </div>
+              <div class="bc-reveal-actions">
+                <button class="btn-reveal" id="bc_next_btn" onclick="bcRevealNext()">▶ Revelar Próximo</button>
+                <button class="btn btn-secondary" onclick="bcRevealAll()">Revelar Todos</button>
+                <button class="btn btn-danger" onclick="bcReset()">↺ Reiniciar</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- CATEGORIA & ETIQUETA -->
+          <div class="card">
+            <div class="card-title">Categoria em Cena</div>
+            <div class="bc-spoke-grid">
+              <div class="form-group">
+                <label>Categoria</label>
+                <select id="bc_catId" onchange="saveBroadcast()"
+                  style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:.88rem;outline:none;cursor:pointer"></select>
+              </div>
+              <div class="form-group">
+                <label>Etiqueta personalizada (opcional)</label>
+                <input type="text" id="bc_label" placeholder="Deixa vazio para usar o nome da categoria" />
+              </div>
+            </div>
+          </div>
+
+          <!-- SPOKESPERSON -->
+          <div class="card">
+            <div class="card-title">Spokesperson</div>
+            <div class="ov-control-row" style="margin-bottom:14px">
+              <div class="ov-control-label">Mostrar área de spokesperson<small>A zona direita com câmara e
+                  nameplate</small></div>
+              <label class="toggle"><input type="checkbox" id="bc_showSpoke" />
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+            <div class="bc-spoke-grid">
+              <div class="form-group">
+                <label>Nome</label>
+                <input type="text" id="bc_spokeName" placeholder="ex: Maria Silva" />
+              </div>
+              <div class="form-group">
+                <label>Cargo / Papel</label>
+                <input type="text" id="bc_spokeRole" placeholder="ex: Presidente do Grupo" />
+              </div>
+            </div>
+          </div>
+
+          <!-- OPÇÕES -->
+          <div class="card">
+            <div class="card-title">Opções</div>
+            <div class="ov-control-grid">
+              <div class="ov-control-row">
+                <div class="ov-control-label">Votos em tempo real<small>Contador de votos no topo</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_showLive" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              <div class="ov-control-row">
+                <div class="ov-control-label">Destaque do líder<small>1.º lugar com estilo especial</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_hlLeader" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- GUARDAR -->
+          <button class="btn btn-primary" style="width:100%;justify-content:center;padding:14px"
+            onclick="saveBroadcast()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            Guardar e Aplicar em Direto
+          </button>
+
+          <p style="margin-top:14px;font-size:.76rem;color:var(--text-muted);line-height:1.65">
+            No OBS: adiciona uma fonte <strong style="color:var(--text)">Browser Source</strong> → URL: <strong
+              style="color:var(--text)">obs.html</strong> · Resolução: <strong
+              style="color:var(--text)">1920×1080</strong> · O fundo é preenchido com as cores do tema escolhido. A zona
+            direita (spokesperson) serve para adicionar uma captura de câmara por cima no OBS.
+          </p>
+        </div>
+
+        <!-- OVERLAY OBS -->
+        <div id="sec_overlay" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Overlay OBS</h1>
+              <p>Controla o overlay de transmissão em tempo real</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="status-badge closed" id="ovBadge">OCULTO</span>
+            </div>
+          </div>
+
+          <!-- URL box -->
+          <div class="ov-url-box">
+            <span class="ov-url-label">URL do Overlay</span>
+            <span class="ov-url-val" id="ovUrlDisplay">obs.html</span>
+            <button class="btn btn-secondary btn-sm"
+              onclick="navigator.clipboard.writeText(location.origin+'/obs.html').then(()=>showToast('✦ URL copiado'))">Copiar</button>
+          </div>
+
+          <!-- VISIBILIDADE -->
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-title">Visibilidade</div>
+            <div class="ov-control-row" style="margin-bottom:0">
+              <div class="ov-control-label">
+                Mostrar Overlay
+                <small>Liga/desliga o overlay no OBS sem remover a fonte</small>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="ov_visible" onchange="setOverlayProp('visible', this.checked)" />
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+
+          <!-- MODO -->
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-title">Modo de Visualização</div>
+            <input type="hidden" id="ov_mode" value="leaderboard" />
+            <div class="ov-mode-btns">
+              <div class="ov-mode-btn active" onclick="selectMode('leaderboard',this)">
+                <div class="ov-mode-icon">🏆</div>
+                <div class="ov-mode-name">Leaderboard</div>
+                <div class="ov-mode-desc">Lista completa de todos os candidatos com barras</div>
+              </div>
+              <div class="ov-mode-btn" onclick="selectMode('leader',this)">
+                <div class="ov-mode-icon">⭐</div>
+                <div class="ov-mode-name">Líder</div>
+                <div class="ov-mode-desc">Apenas o candidato em 1.º lugar em destaque</div>
+              </div>
+              <div class="ov-mode-btn" onclick="selectMode('ticker',this)">
+                <div class="ov-mode-icon">📰</div>
+                <div class="ov-mode-name">Ticker</div>
+                <div class="ov-mode-desc">Barra horizontal deslizante com todos os resultados</div>
+              </div>
+              <div class="ov-mode-btn" onclick="selectMode('hidden',this)">
+                <div class="ov-mode-icon">👁️</div>
+                <div class="ov-mode-name">Oculto</div>
+                <div class="ov-mode-desc">Overlay invisível mas activo em segundo plano</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CATEGORIA & POSIÇÃO -->
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-title">Categoria & Posição</div>
+            <div class="ov-control-grid">
+              <div class="form-group">
+                <label>Categoria a mostrar</label>
+                <select id="ov_catId"
+                  style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:0.88rem;outline:none;cursor:pointer"></select>
+              </div>
+              <div class="form-group">
+                <label>Posição</label>
+                <input type="hidden" id="ov_position" value="left" />
+                <div class="ov-pos-btns">
+                  <div class="ov-pos-btn active" onclick="selectPos('left',this)">◀ Esquerda</div>
+                  <div class="ov-pos-btn" onclick="selectPos('right',this)">Direita ▶</div>
+                </div>
+              </div>
+              <div class="form-group" id="ov_maxRows_row">
+                <label>Número máximo de linhas</label>
+                <input type="number" id="ov_maxRows" min="3" max="15" value="10" placeholder="10"
+                  style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:0.88rem;outline:none" />
+              </div>
+              <div class="form-group">
+                <label>Título personalizado (opcional)</label>
+                <input type="text" id="ov_customTitle" placeholder="Deixa vazio para usar o título do evento" />
+              </div>
+            </div>
+          </div>
+
+          <!-- OPÇÕES -->
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-title">Opções de Exibição</div>
+            <div class="ov-control-grid">
+              <div class="ov-control-row">
+                <div class="ov-control-label">Mostrar fotos<small>Thumbnails dos candidatos</small></div>
+                <label class="toggle"><input type="checkbox" id="ov_showPhotos" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              <div class="ov-control-row">
+                <div class="ov-control-label">Barras de progresso<small>Barra visual de percentagem</small></div>
+                <label class="toggle"><input type="checkbox" id="ov_showBars" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              <div class="ov-control-row">
+                <div class="ov-control-label">Total de votos<small>Contador no cabeçalho</small></div>
+                <label class="toggle"><input type="checkbox" id="ov_showTotal" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              <div class="ov-control-row">
+                <div class="ov-control-label">Nome da categoria<small>Subtítulo sob o título</small></div>
+                <label class="toggle"><input type="checkbox" id="ov_showCatName" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              <div class="ov-control-row">
+                <div class="ov-control-label">Relógio em tempo real<small>Hora no canto do overlay</small></div>
+                <label class="toggle"><input type="checkbox" id="ov_showClock" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              <div class="ov-control-row">
+                <div class="ov-control-label">Indicador "A Votar"<small>Footer verde quando aberto</small></div>
+                <label class="toggle"><input type="checkbox" id="ov_showStatus" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- GUARDAR -->
+          <button class="btn btn-primary" style="width:100%;justify-content:center;padding:14px"
+            onclick="saveOverlay()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            Aplicar Overlay em Direto
+          </button>
+
+          <p style="margin-top:14px;font-size:0.76rem;color:var(--text-muted);line-height:1.65">
+            No OBS: adiciona uma fonte <strong style="color:var(--text)">Browser Source</strong> com o URL do overlay,
+            resolução <strong style="color:var(--text)">1920×1080</strong>, e activa a opção <strong
+              style="color:var(--text)">Transparent background</strong>. As alterações aplicam-se instantaneamente sem
+            reiniciar o OBS.
+          </p>
+        </div>
+
+        <!-- EVENTO -->
+        <div id="sec_event" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Evento</h1>
+              <p>Informação geral do evento</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="form-group"><label>Título</label><input type="text" id="f_title"
+                placeholder="ex: Grupo Armindo Awards 2025" /></div>
+            <div class="form-group"><label>Subtítulo</label><input type="text" id="f_subtitle"
+                placeholder="ex: O público escolhe!" /></div>
+            <div class="form-group"><label>Descrição</label><textarea id="f_description" rows="3"
+                placeholder="Breve descrição do evento…"></textarea></div>
+            <div class="form-group"><label>ID da Sessão (só leitura)</label><input type="text" id="f_sessionId" readonly
+                placeholder="Gera uma sessão no separador Votação" /></div>
+            <button class="btn btn-primary" onclick="saveEventInfo()">Guardar</button>
+          </div>
+        </div>
+
       </main>
+    </div>
+  </div>
+
+  <!-- CATEGORY MODAL -->
+  <div class="modal-overlay" id="categoryModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="catModalTitle">Nova Categoria</h3>
+        <button class="modal-close" onclick="closeModal('categoryModal')">✕</button>
+      </div>
+      <div class="form-group">
+        <label>Nome da Categoria *</label>
+        <input type="text" id="cat_name" placeholder="ex: Melhor Ator, Melhor Filme, Melhor Música…" />
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('categoryModal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveCategory()">Guardar</button>
+      </div>
     </div>
   </div>
 
@@ -2265,10 +2807,10 @@
         <button class="modal-close" onclick="closeModal('candidateModal')">✕</button>
       </div>
       <div class="form-group"><label>Nome *</label><input type="text" id="c_name" placeholder="ex: Mariza" /></div>
-      <div class="form-group"><label>Subtítulo / Categoria</label><input type="text" id="c_subtitle"
-          placeholder="ex: Fado, Best Actress, Portugal..." /></div>
+      <div class="form-group"><label>Subtítulo / Descrição curta</label><input type="text" id="c_subtitle"
+          placeholder="ex: Fado, Best Actress, Portugal…" /></div>
       <div class="form-group"><label>Descrição (opcional)</label><textarea id="c_description" rows="3"
-          placeholder="Breve descrição..."></textarea></div>
+          placeholder="Breve descrição…"></textarea></div>
       <div class="form-group">
         <label>Foto</label>
         <label class="photo-upload-area" for="photoFileInput">
