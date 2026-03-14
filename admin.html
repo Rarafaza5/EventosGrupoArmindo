@@ -1,938 +1,2294 @@
 <!DOCTYPE html>
 <html lang="pt">
+
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Admin — Grupo Armindo Votação</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Jost:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Grupo Armindo Votação</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Jost:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
 
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getDatabase, ref, onValue, set, get, push } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, onValue, set, get, push } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik",
-    authDomain: "aawards.firebaseapp.com",
-    databaseURL: "https://aawards-default-rtdb.firebaseio.com",
-    projectId: "aawards",
-    storageBucket: "aawards.firebasestorage.app",
-    messagingSenderId: "839334918366",
-    appId: "1:839334918366:web:454a259fa3e2665b46ea4f"
-  };
+    const firebaseConfig = {
+      apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik",
+      authDomain: "aawards.firebaseapp.com",
+      databaseURL: "https://aawards-default-rtdb.firebaseio.com",
+      projectId: "aawards",
+      storageBucket: "aawards.firebasestorage.app",
+      messagingSenderId: "839334918366",
+      appId: "1:839334918366:web:454a259fa3e2665b46ea4f"
+    };
 
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
 
-  let config = {};
-  let candidates = [];
-  let votes = {};
-  let editingIndex = -1;
+    let config = {};
+    let candidates = [];
+    let votes = {};
+    let editingIndex = -1;
 
-  // ── AUTH ──
-  const ADMIN_PASS = "admin1234";
-  let authed = false;
+    const ADMIN_PASS = "admin1234";
+    let authed = false;
 
-  function checkAuth() {
-    const stored = sessionStorage.getItem('ga_admin_auth');
-    if (stored === ADMIN_PASS) { authed = true; showApp(); return; }
-    document.getElementById('authWall').style.display = 'flex';
-    document.getElementById('mainApp').style.display = 'none';
-  }
-
-  window.doLogin = function() {
-    const val = document.getElementById('passInput').value;
-    if (val === ADMIN_PASS) {
-      sessionStorage.setItem('ga_admin_auth', val);
-      authed = true;
-      document.getElementById('authWall').style.display = 'none';
-      showApp();
-    } else {
-      document.getElementById('authError').style.display = 'block';
-      document.getElementById('passInput').style.animation = 'none';
-      requestAnimationFrame(() => { document.getElementById('passInput').style.animation = 'shake 0.4s ease'; });
+    function checkAuth() {
+      const stored = sessionStorage.getItem('ga_admin_auth');
+      if (stored === ADMIN_PASS) { authed = true; showApp(); return; }
+      document.getElementById('authWall').style.display = 'flex';
+      document.getElementById('mainApp').style.display = 'none';
     }
-  };
 
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('passInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') window.doLogin(); });
-    checkAuth();
-  });
+    window.doLogin = function () {
+      const val = document.getElementById('passInput').value;
+      if (val === ADMIN_PASS) {
+        sessionStorage.setItem('ga_admin_auth', val);
+        authed = true;
+        document.getElementById('authWall').style.display = 'none';
+        showApp();
+      } else {
+        document.getElementById('authError').style.display = 'block';
+        document.getElementById('passInput').style.animation = 'none';
+        requestAnimationFrame(() => { document.getElementById('passInput').style.animation = 'shake 0.4s ease'; });
+      }
+    };
 
-  function showApp() {
-    document.getElementById('mainApp').style.display = 'block';
-    loadConfig();
-  }
-
-  // ── LOAD CONFIG ──
-  function loadConfig() {
-    onValue(ref(db, 'config'), (snap) => {
-      config = snap.val() || {};
-      candidates = config.candidates || [];
-      populateForm();
-      renderCandidateList();
-      updateStatusDisplay(config.votingOpen || false, config.sessionId || null);
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('passInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') window.doLogin(); });
+      checkAuth();
+      buildTemplateGrid();
     });
-    onValue(ref(db, `sessions`), (snap) => {
-      const sessions = snap.val() || {};
+
+    function showApp() {
+      document.getElementById('mainApp').style.display = 'block';
+      loadConfig();
+    }
+
+    function loadConfig() {
+      onValue(ref(db, 'config'), (snap) => {
+        config = snap.val() || {};
+        candidates = config.candidates || [];
+        populateForm();
+        renderCandidateList();
+        updateStatusDisplay(config.votingOpen || false, config.sessionId || null);
+        document.getElementById('candidateCount').textContent = candidates.length + ' candidatos';
+      });
+      onValue(ref(db, 'sessions'), (snap) => {
+        const sessions = snap.val() || {};
+        const sid = config.sessionId || 'default';
+        votes = (sessions[sid] && sessions[sid].votes) || {};
+        updateVoteCounts(votes);
+        renderResults(votes);
+      });
+    }
+
+    function populateForm() {
+      document.getElementById('f_title').value = config.title || '';
+      document.getElementById('f_subtitle').value = config.subtitle || '';
+      document.getElementById('f_description').value = config.description || '';
+      const t = config.theme || {};
+      setColorField('t_bg', t.bg || '#07060e');
+      setColorField('t_surface', t.surface || '#0d0c1a');
+      setColorField('t_accent', t.accent || '#c4973a');
+      setColorField('t_accent2', t.accent2 || '#e8d5a3');
+      setColorField('t_text', t.text || '#ede9e0');
+      setColorField('t_cardBg', t.cardBg || '#0e0d1c');
+      document.getElementById('f_sessionId').value = config.sessionId || '';
+      const toggle = document.getElementById('votingToggle');
+      toggle.checked = config.votingOpen || false;
+      updateToggleUI(config.votingOpen || false);
+      updatePreview();
+    }
+
+    function setColorField(id, value) {
+      const textEl = document.getElementById(id);
+      if (textEl) textEl.value = value;
+      const colorEl = document.getElementById(id + '_picker');
+      if (colorEl) colorEl.value = value;
+    }
+
+    function updateStatusDisplay(isOpen, sessionId) {
+      const badge = document.getElementById('votingBadge');
+      const dot = document.getElementById('heroStatusDot');
+      if (isOpen) {
+        badge.textContent = 'ABERTA'; badge.className = 'status-badge open';
+        dot.className = 'hero-dot open';
+      } else {
+        badge.textContent = 'FECHADA'; badge.className = 'status-badge closed';
+        dot.className = 'hero-dot closed';
+      }
+      if (sessionId) document.getElementById('sessionIdDisplay').textContent = sessionId;
+    }
+
+    function updateToggleUI(isOpen) {
+      const label = document.getElementById('toggleLabel');
+      label.textContent = isOpen ? 'Fechar Votação' : 'Abrir Votação';
+      updateStatusDisplay(isOpen, config.sessionId || null);
+    }
+
+    function updateVoteCounts(v) {
+      const total = Object.values(v).reduce((a, b) => a + b, 0);
+      document.getElementById('totalVotes').textContent = total;
+      candidates.forEach(c => {
+        const badge = document.querySelector(`.c-votes-badge[data-id="${c.id}"]`);
+        if (badge) badge.textContent = (v[c.id] || 0) + ' votos';
+      });
+    }
+
+    window.toggleVoting = async function () {
+      const isOpen = document.getElementById('votingToggle').checked;
+      await set(ref(db, 'config/votingOpen'), isOpen);
+      updateToggleUI(isOpen);
+      showToast(isOpen ? '✦ Votação Aberta!' : '✦ Votação Fechada');
+    };
+
+    window.newSession = async function () {
+      if (!confirm('Iniciar nova sessão de votação?\n\nTodos os utilizadores poderão votar novamente.')) return;
+      const newId = 'session_' + Date.now();
+      await set(ref(db, 'config/sessionId'), newId);
+      await set(ref(db, 'config/votingOpen'), false);
+      document.getElementById('votingToggle').checked = false;
+      updateToggleUI(false);
+      document.getElementById('f_sessionId').value = newId;
+      config.sessionId = newId;
+      showToast('✦ Nova sessão criada');
+    };
+
+    window.resetVotes = async function () {
+      if (!confirm('Apagar todos os votos da sessão atual?\nEsta ação é irreversível.')) return;
       const sid = config.sessionId || 'default';
-      votes = (sessions[sid] && sessions[sid].votes) || {};
-      updateVoteCounts(votes);
-      renderResults(votes);
-    });
-  }
-
-  function populateForm() {
-    document.getElementById('f_title').value = config.title || '';
-    document.getElementById('f_subtitle').value = config.subtitle || '';
-    document.getElementById('f_description').value = config.description || '';
-    const t = config.theme || {};
-    document.getElementById('t_bg').value = t.bg || '#06050f';
-    document.getElementById('t_surface').value = t.surface || '#0d0c1a';
-    document.getElementById('t_accent').value = t.accent || '#c4973a';
-    document.getElementById('t_accent2').value = t.accent2 || '#e8d5a3';
-    document.getElementById('t_text').value = t.text || '#ede9e0';
-    document.getElementById('t_cardBg').value = t.cardBg || '#100f1e';
-    document.getElementById('f_sessionId').value = config.sessionId || '';
-    const toggle = document.getElementById('votingToggle');
-    toggle.checked = config.votingOpen || false;
-    updateToggleUI(config.votingOpen || false);
-  }
-
-  function updateStatusDisplay(isOpen, sessionId) {
-    const badge = document.getElementById('votingBadge');
-    const dot = document.getElementById('heroStatusDot');
-    if (isOpen) {
-      badge.textContent = 'ABERTA'; badge.className = 'status-badge open';
-      dot.className = 'hero-dot open';
-    } else {
-      badge.textContent = 'FECHADA'; badge.className = 'status-badge closed';
-      dot.className = 'hero-dot closed';
-    }
-    if (sessionId) {
-      document.getElementById('sessionIdDisplay').textContent = sessionId;
-    }
-  }
-
-  function updateToggleUI(isOpen) {
-    const label = document.getElementById('toggleLabel');
-    label.textContent = isOpen ? 'Fechar Votação' : 'Abrir Votação';
-    updateStatusDisplay(isOpen, config.sessionId || null);
-  }
-
-  function updateVoteCounts(v) {
-    const total = Object.values(v).reduce((a, b) => a + b, 0);
-    document.getElementById('totalVotes').textContent = total;
-    // Update candidate list badges
-    candidates.forEach(c => {
-      const badge = document.querySelector(`.c-votes-badge[data-id="${c.id}"]`);
-      if (badge) badge.textContent = (v[c.id] || 0) + ' votos';
-    });
-  }
-
-  // ── VOTING TOGGLE ──
-  window.toggleVoting = async function() {
-    const isOpen = document.getElementById('votingToggle').checked;
-    await set(ref(db, 'config/votingOpen'), isOpen);
-    updateToggleUI(isOpen);
-    showToast(isOpen ? '✦ Votação Aberta!' : '✦ Votação Fechada');
-  };
-
-  // ── NEW SESSION (resets vote lock for all users) ──
-  window.newSession = async function() {
-    if (!confirm('Iniciar nova sessão de votação?\n\nTodos os utilizadores poderão votar novamente. Os votos anteriores serão arquivados.')) return;
-    const newId = 'session_' + Date.now();
-    await set(ref(db, 'config/sessionId'), newId);
-    await set(ref(db, 'config/votingOpen'), false);
-    document.getElementById('votingToggle').checked = false;
-    updateToggleUI(false);
-    document.getElementById('f_sessionId').value = newId;
-    config.sessionId = newId;
-    showToast('✦ Nova sessão criada — utilizadores podem votar novamente');
-  };
-
-  // ── RESET VOTES ──
-  window.resetVotes = async function() {
-    if (!confirm('Apagar todos os votos da sessão atual?\nEsta ação é irreversível.')) return;
-    const sid = config.sessionId || 'default';
-    await set(ref(db, `sessions/${sid}/votes`), null);
-    showToast('✦ Votos apagados');
-  };
-
-  // ── SAVE EVENT INFO ──
-  window.saveEventInfo = async function() {
-    await set(ref(db, 'config/title'), document.getElementById('f_title').value);
-    await set(ref(db, 'config/subtitle'), document.getElementById('f_subtitle').value);
-    await set(ref(db, 'config/description'), document.getElementById('f_description').value);
-    showToast('✦ Informação guardada');
-  };
-
-  // ── SAVE THEME ──
-  window.saveTheme = async function() {
-    const theme = {
-      bg: document.getElementById('t_bg').value,
-      surface: document.getElementById('t_surface').value,
-      accent: document.getElementById('t_accent').value,
-      accent2: document.getElementById('t_accent2').value,
-      text: document.getElementById('t_text').value,
-      cardBg: document.getElementById('t_cardBg').value,
+      await set(ref(db, `sessions/${sid}/votes`), null);
+      showToast('✦ Votos apagados');
     };
-    await set(ref(db, 'config/theme'), theme);
-    showToast('✦ Tema guardado');
-  };
 
-  // ── PRESET THEMES ──
-  const presets = {
-    classico: { bg:'#06050f', surface:'#0d0c1a', accent:'#c4973a', accent2:'#e8d5a3', text:'#ede9e0', cardBg:'#100f1e' },
-    eurovisao: { bg:'#04021a', surface:'#0a0830', accent:'#e8c400', accent2:'#ffe066', text:'#f0eeff', cardBg:'#0c0a2e' },
-    oscares: { bg:'#0a0600', surface:'#140e00', accent:'#c9a84c', accent2:'#e8d5a3', text:'#f5f0e8', cardBg:'#160f00' },
-    festival: { bg:'#00120a', surface:'#001a10', accent:'#00d46a', accent2:'#69f0ae', text:'#e8fff2', cardBg:'#001510' },
-    elegante: { bg:'#f7f5f2', surface:'#efefea', accent:'#1a1a1a', accent2:'#555', text:'#1a1a1a', cardBg:'#ffffff' },
-  };
-
-  window.applyPreset = function(name) {
-    const p = presets[name]; if (!p) return;
-    Object.keys(p).forEach(k => {
-      const el = document.getElementById('t_' + k);
-      if (el) el.value = p[k];
-    });
-    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`[data-preset="${name}"]`)?.classList.add('active');
-  };
-
-  // ── CANDIDATES ──
-  function renderCandidateList() {
-    const list = document.getElementById('candidateList');
-    list.innerHTML = '';
-    if (candidates.length === 0) {
-      list.innerHTML = '<div class="empty-list">Nenhum candidato. Adiciona um abaixo!</div>';
-      return;
-    }
-    candidates.forEach((c, i) => {
-      const item = document.createElement('div');
-      item.className = 'candidate-item';
-      item.innerHTML = `
-        <div class="c-num">${String(i+1).padStart(2,'0')}</div>
-        <div class="c-thumb">
-          ${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="c-initial">${c.name.charAt(0)}</div>`}
-        </div>
-        <div class="c-info">
-          <div class="c-name">${c.name}</div>
-          ${c.subtitle ? `<div class="c-sub">${c.subtitle}</div>` : ''}
-        </div>
-        <span class="c-votes-badge" data-id="${c.id}">${(votes[c.id] || 0)} votos</span>
-        <div class="c-actions">
-          <button class="btn-icon" title="Editar" onclick="editCandidate(${i})">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          <button class="btn-icon danger" title="Remover" onclick="removeCandidate(${i})">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-          </button>
-        </div>
-      `;
-      list.appendChild(item);
-    });
-  }
-
-  function renderResults(v) {
-    const area = document.getElementById('resultsArea');
-    if (candidates.length === 0) { area.innerHTML = '<div class="empty-list">Sem candidatos.</div>'; return; }
-    const total = Object.values(v).reduce((a,b) => a+b, 0);
-    const sorted = [...candidates].map(c => ({ ...c, count: v[c.id] || 0 })).sort((a,b) => b.count - a.count);
-    area.innerHTML = '';
-    sorted.forEach((c, i) => {
-      const pct = total ? (c.count / total * 100).toFixed(1) : 0;
-      const row = document.createElement('div');
-      row.className = 'result-row' + (i === 0 && c.count > 0 ? ' result-row--leader' : '');
-      row.innerHTML = `
-        <div class="result-rank">${i === 0 && c.count > 0 ? '🏆' : '#' + (i+1)}</div>
-        <div class="result-thumb">
-          ${c.photo ? `<img src="${c.photo}"/>` : `<div class="c-initial" style="font-size:0.9rem">${c.name.charAt(0)}</div>`}
-        </div>
-        <div class="result-info">
-          <div class="result-name">${c.name}</div>
-          <div class="result-bar-wrap"><div class="result-bar" style="width:${pct}%"></div></div>
-        </div>
-        <div class="result-count">${c.count} <span>${pct}%</span></div>
-      `;
-      area.appendChild(row);
-    });
-  }
-
-  window.openAddCandidate = function() {
-    editingIndex = -1;
-    document.getElementById('candidateModalTitle').textContent = 'Adicionar Candidato';
-    document.getElementById('c_name').value = '';
-    document.getElementById('c_subtitle').value = '';
-    document.getElementById('c_description').value = '';
-    document.getElementById('c_photoB64').value = '';
-    const preview = document.getElementById('c_photoPreview');
-    preview.style.display = 'none'; preview.src = '';
-    openModal('candidateModal');
-  };
-
-  window.editCandidate = function(i) {
-    editingIndex = i;
-    const c = candidates[i];
-    document.getElementById('candidateModalTitle').textContent = 'Editar Candidato';
-    document.getElementById('c_name').value = c.name || '';
-    document.getElementById('c_subtitle').value = c.subtitle || '';
-    document.getElementById('c_description').value = c.description || '';
-    document.getElementById('c_photoB64').value = c.photo || '';
-    const preview = document.getElementById('c_photoPreview');
-    if (c.photo) { preview.src = c.photo; preview.style.display = 'block'; }
-    else { preview.style.display = 'none'; preview.src = ''; }
-    openModal('candidateModal');
-  };
-
-  window.removeCandidate = async function(i) {
-    if (!confirm('Remover este candidato?')) return;
-    candidates.splice(i, 1);
-    await set(ref(db, 'config/candidates'), candidates);
-    showToast('✦ Candidato removido');
-  };
-
-  window.saveCandidate = async function() {
-    const name = document.getElementById('c_name').value.trim();
-    if (!name) { document.getElementById('c_name').focus(); return; }
-    const c = {
-      id: editingIndex >= 0 ? candidates[editingIndex].id : 'c_' + Date.now(),
-      name,
-      subtitle: document.getElementById('c_subtitle').value.trim(),
-      description: document.getElementById('c_description').value.trim(),
-      photo: document.getElementById('c_photoB64').value || '',
+    window.saveEventInfo = async function () {
+      await set(ref(db, 'config/title'), document.getElementById('f_title').value);
+      await set(ref(db, 'config/subtitle'), document.getElementById('f_subtitle').value);
+      await set(ref(db, 'config/description'), document.getElementById('f_description').value);
+      showToast('✦ Informação guardada');
     };
-    if (editingIndex >= 0) { candidates[editingIndex] = c; }
-    else { candidates.push(c); }
-    await set(ref(db, 'config/candidates'), candidates);
-    closeModal('candidateModal');
-    showToast('✦ Candidato guardado');
-  };
 
-  window.handlePhotoUpload = function(input) {
-    const file = input.files[0]; if (!file) return;
-    if (file.size > 600000) { alert('Imagem demasiado grande. Máx. 500KB.'); return; }
-    const reader = new FileReader();
-    reader.onload = e => {
-      const b64 = e.target.result;
-      document.getElementById('c_photoB64').value = b64;
+    window.saveTheme = async function () {
+      const theme = {
+        bg: document.getElementById('t_bg').value,
+        surface: document.getElementById('t_surface').value,
+        accent: document.getElementById('t_accent').value,
+        accent2: document.getElementById('t_accent2').value,
+        text: document.getElementById('t_text').value,
+        cardBg: document.getElementById('t_cardBg').value,
+      };
+      await set(ref(db, 'config/theme'), theme);
+      showToast('✦ Tema guardado e aplicado');
+    };
+
+    /* ── 200 TEMPLATES ── */
+    const TEMPLATES = [
+      // ── MÚSICA ──
+      { cat: 'Música', icon: '🎵', name: 'Festival da Canção', title: 'Festival da Canção', subtitle: 'Qual é a melhor música?', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
+      { cat: 'Música', icon: '🎤', name: 'Eurovisão', title: 'Eurovision Song Contest', subtitle: 'Vote for your favourite!', accent: '#e8c400', accent2: '#ffe066', bg: '#04021a', surface: '#0a0830', text: '#f0eeff', cardBg: '#0c0a2e' },
+      { cat: 'Música', icon: '🏆', name: 'MTV Awards', title: 'MTV Music Awards', subtitle: 'Best Music Video', accent: '#ff0050', accent2: '#ff80a0', bg: '#0a0000', surface: '#150005', text: '#ffe8ee', cardBg: '#120004' },
+      { cat: 'Música', icon: '🎸', name: 'Rock Fest', title: 'Rock Festival', subtitle: 'Vote no teu artista favorito', accent: '#ff4400', accent2: '#ff8866', bg: '#080300', surface: '#120500', text: '#fff3ee', cardBg: '#0f0400' },
+      { cat: 'Música', icon: '🎶', name: 'Festival Verão', title: 'Festival de Verão', subtitle: 'O público escolhe!', accent: '#00d46a', accent2: '#69f0ae', bg: '#00120a', surface: '#001a10', text: '#e8fff2', cardBg: '#001510' },
+      { cat: 'Música', icon: '🎷', name: 'Jazz Gala', title: 'Jazz Awards', subtitle: 'Best Performance of the Year', accent: '#c4973a', accent2: '#e8c870', bg: '#08050a', surface: '#100d15', text: '#f5ead5', cardBg: '#0d0b12' },
+      { cat: 'Música', icon: '🎻', name: 'Música Clássica', title: 'Gala Clássica', subtitle: 'O melhor da música clássica', accent: '#c8a86e', accent2: '#e8d5a3', bg: '#05040a', surface: '#0c0b14', text: '#f2ede0', cardBg: '#090815' },
+      { cat: 'Música', icon: '🥁', name: 'Hip Hop Awards', title: 'Hip Hop Awards', subtitle: 'Melhor Álbum do Ano', accent: '#ff6b00', accent2: '#ffaa55', bg: '#050201', surface: '#0f0602', text: '#fff8f0', cardBg: '#0a0401' },
+      { cat: 'Música', icon: '💿', name: 'Pop Charts', title: 'Pop Charts 2025', subtitle: 'A música mais ouvida', accent: '#e040fb', accent2: '#f8b4ff', bg: '#08001a', surface: '#10004a', text: '#fce8ff', cardBg: '#0c0030' },
+      { cat: 'Música', icon: '🎧', name: 'DJ Awards', title: 'DJ of the Year', subtitle: 'Vote no melhor DJ', accent: '#00e5ff', accent2: '#80f4ff', bg: '#001015', surface: '#00151c', text: '#e0faff', cardBg: '#001219' },
+      { cat: 'Música', icon: '🌟', name: 'Melhor Álbum', title: 'Álbum do Ano', subtitle: 'Qual foi o melhor álbum?', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#0f0a00', text: '#fffbe0', cardBg: '#0a0700' },
+      { cat: 'Música', icon: '🎼', name: 'Melhor Letra', title: 'Melhor Letra', subtitle: 'A canção com mais alma', accent: '#a78bfa', accent2: '#d4bbff', bg: '#060010', surface: '#0d0020', text: '#ede8ff', cardBg: '#09001a' },
+      { cat: 'Música', icon: '🎹', name: 'Piano Contest', title: 'Piano Grand Prix', subtitle: 'Vote no melhor pianista', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#03020a', surface: '#07060f', text: '#f5f0e8', cardBg: '#06050e' },
+      { cat: 'Música', icon: '🎺', name: 'Latin Music', title: 'Latin Music Awards', subtitle: 'El público decide', accent: '#ff6b35', accent2: '#ffaa80', bg: '#0a0200', surface: '#160400', text: '#ffe8d5', cardBg: '#120300' },
+      { cat: 'Música', icon: '🎵', name: 'Karaoke King', title: 'Karaoke Championship', subtitle: 'Quem canta melhor?', accent: '#ff79c6', accent2: '#ffb3e0', bg: '#0d0014', surface: '#170020', text: '#ffe8f5', cardBg: '#120018' },
+      // ── CINEMA & TV ──
+      { cat: 'Cinema & TV', icon: '🏆', name: 'Óscares', title: 'Cerimónia dos Óscares', subtitle: 'A Academia Escolhe', accent: '#c9a84c', accent2: '#e8d5a3', bg: '#0a0600', surface: '#140e00', text: '#f5f0e8', cardBg: '#160f00' },
+      { cat: 'Cinema & TV', icon: '🎬', name: 'Festival de Cinema', title: 'Festival de Cinema', subtitle: 'Palma de Ouro — Voto do Público', accent: '#ffd700', accent2: '#ffe680', bg: '#0a0800', surface: '#151000', text: '#fffce0', cardBg: '#100c00' },
+      { cat: 'Cinema & TV', icon: '📺', name: 'Globos de Ouro', title: 'Globos de Ouro', subtitle: 'Melhor Série do Ano', accent: '#ffd700', accent2: '#fff0a0', bg: '#080600', surface: '#120e00', text: '#fffce5', cardBg: '#0e0a00' },
+      { cat: 'Cinema & TV', icon: '🎭', name: 'BAFTA', title: 'BAFTA Awards', subtitle: 'Best British Film', accent: '#e8c870', accent2: '#f5e0a0', bg: '#06050f', surface: '#0c0a1a', text: '#f0ebe0', cardBg: '#0a091c' },
+      { cat: 'Cinema & TV', icon: '🌟', name: 'Emmy Awards', title: 'Emmy Awards', subtitle: 'Best Drama Series', accent: '#c4973a', accent2: '#e8d5a3', bg: '#07060e', surface: '#0e0c1c', text: '#ede9e0', cardBg: '#0d0b1d' },
+      { cat: 'Cinema & TV', icon: '🎥', name: 'Melhor Realizador', title: 'Melhor Realizador', subtitle: 'O público escolhe o realizador do ano', accent: '#ff9500', accent2: '#ffcc70', bg: '#0a0400', surface: '#150800', text: '#fff5e0', cardBg: '#120600' },
+      { cat: 'Cinema & TV', icon: '⭐', name: 'Melhor Ator', title: 'Melhor Ator / Atriz', subtitle: 'O papel que ficou na memória', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#040304', surface: '#0a0a0a', text: '#f5f5f0', cardBg: '#0d0d0d' },
+      { cat: 'Cinema & TV', icon: '🎞️', name: 'Cannes', title: 'Festival de Cannes', subtitle: 'Prix du Jury — Vote du Public', accent: '#e8b800', accent2: '#ffe066', bg: '#030200', surface: '#090700', text: '#fffce5', cardBg: '#070500' },
+      { cat: 'Cinema & TV', icon: '📡', name: 'Reality Show', title: 'Reality Show', subtitle: 'Quem sai? O público decide!', accent: '#ff3d71', accent2: '#ff90b0', bg: '#0a0008', surface: '#160010', text: '#ffe8f2', cardBg: '#120010' },
+      { cat: 'Cinema & TV', icon: '🎮', name: 'Game Awards', title: 'The Game Awards', subtitle: 'Game of the Year', accent: '#00e676', accent2: '#69f0ae', bg: '#001a08', surface: '#002510', text: '#e8fff2', cardBg: '#001e0c' },
+      { cat: 'Cinema & TV', icon: '🎬', name: 'Sundance', title: 'Sundance Film Festival', subtitle: 'Audience Award', accent: '#ff6b6b', accent2: '#ffaaaa', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#120000' },
+      { cat: 'Cinema & TV', icon: '📽️', name: 'Animação', title: 'Melhor Filme de Animação', subtitle: 'A animação favorita do público', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#150a00', text: '#fff8e8', cardBg: '#120700' },
+      { cat: 'Cinema & TV', icon: '🎭', name: 'Teatro', title: 'Prémios de Teatro', subtitle: 'Melhor Peça do Ano', accent: '#9c27b0', accent2: '#ce93d8', bg: '#060010', surface: '#0e0020', text: '#f5e8ff', cardBg: '#0a0018' },
+      { cat: 'Cinema & TV', icon: '🎤', name: 'Talk Show', title: 'Melhor Talk Show', subtitle: 'O programa favorito da audiência', accent: '#2196f3', accent2: '#90caf9', bg: '#000a18', surface: '#001520', text: '#e8f4ff', cardBg: '#00121c' },
+      { cat: 'Cinema & TV', icon: '🏅', name: 'Netflix Awards', title: 'Melhores da Plataforma', subtitle: 'Série ou filme favorito', accent: '#e50914', accent2: '#ff6b73', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#120000' },
+      // ── DESPORTO ──
+      { cat: 'Desporto', icon: '⚽', name: 'Futebol', title: 'Melhor Jogador', subtitle: 'Craque do Campeonato', accent: '#4caf50', accent2: '#a5d6a7', bg: '#001a04', surface: '#002408', text: '#e8fff2', cardBg: '#001e06' },
+      { cat: 'Desporto', icon: '🏆', name: 'Ballon d\'Or', title: 'Ballon d\'Or', subtitle: 'O melhor do mundo', accent: '#ffd700', accent2: '#ffe880', bg: '#0a0800', surface: '#141000', text: '#fffce0', cardBg: '#100c00' },
+      { cat: 'Desporto', icon: '🏀', name: 'NBA MVP', title: 'NBA Most Valuable Player', subtitle: 'Fan Vote', accent: '#c9472f', accent2: '#e87a60', bg: '#0a0200', surface: '#150400', text: '#fff0ee', cardBg: '#120300' },
+      { cat: 'Desporto', icon: '🎾', name: 'Tennis', title: 'Melhor Tenista', subtitle: 'O público vota', accent: '#8bc34a', accent2: '#c5e1a5', bg: '#011000', surface: '#021800', text: '#f0ffe8', cardBg: '#011400' },
+      { cat: 'Desporto', icon: '🏊', name: 'Natação', title: 'Melhor Nadador', subtitle: 'Campeão olímpico — voto popular', accent: '#00bcd4', accent2: '#80deea', bg: '#001820', surface: '#002030', text: '#e0f8ff', cardBg: '#001c28' },
+      { cat: 'Desporto', icon: '🥊', name: 'Boxe', title: 'Luta do Ano', subtitle: 'A luta mais épica', accent: '#ff1744', accent2: '#ff7070', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#120000' },
+      { cat: 'Desporto', icon: '🏎️', name: 'F1', title: 'Driver of the Year', subtitle: 'Formula 1 Fan Vote', accent: '#e53935', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0d0000' },
+      { cat: 'Desporto', icon: '🎿', name: 'Ski', title: 'Melhor Esquiador', subtitle: 'Campeão das Pistas', accent: '#42a5f5', accent2: '#90caf9', bg: '#000a18', surface: '#001028', text: '#e8f4ff', cardBg: '#000e20' },
+      { cat: 'Desporto', icon: '⚡', name: 'E-Sports', title: 'E-Sports Championship', subtitle: 'Best Player of the Year', accent: '#7c4dff', accent2: '#b39ddb', bg: '#06001a', surface: '#0c0030', text: '#ede8ff', cardBg: '#09001a' },
+      { cat: 'Desporto', icon: '🏋️', name: 'Fitness', title: 'Melhor Atleta', subtitle: 'Saúde e Performance', accent: '#ff6d00', accent2: '#ffab40', bg: '#0a0300', surface: '#140600', text: '#fff8f0', cardBg: '#110400' },
+      { cat: 'Desporto', icon: '⛳', name: 'Golf', title: 'Golf Player of the Year', subtitle: 'Best Performance on Tour', accent: '#388e3c', accent2: '#81c784', bg: '#001200', surface: '#001c00', text: '#e8ffe8', cardBg: '#001600' },
+      { cat: 'Desporto', icon: '🏄', name: 'Surf', title: 'World Surf League', subtitle: 'Voto do Público', accent: '#0288d1', accent2: '#81d4fa', bg: '#000a18', surface: '#001525', text: '#e0f4ff', cardBg: '#001020' },
+      { cat: 'Desporto', icon: '🥋', name: 'Artes Marciais', title: 'Luta do Ano', subtitle: 'MMA Champion Vote', accent: '#d32f2f', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
+      { cat: 'Desporto', icon: '🎯', name: 'Darts', title: 'World Darts Championship', subtitle: 'Favorite Player', accent: '#ffc107', accent2: '#ffe082', bg: '#070500', surface: '#0f0900', text: '#fffce5', cardBg: '#0c0700' },
+      { cat: 'Desporto', icon: '🏈', name: 'Super Bowl', title: 'Super Bowl MVP', subtitle: 'Fan Vote', accent: '#1565c0', accent2: '#90caf9', bg: '#000a1a', surface: '#000f28', text: '#e8f4ff', cardBg: '#000c20' },
+      // ── MODA & BELEZA ──
+      { cat: 'Moda & Beleza', icon: '👗', name: 'Fashion Week', title: 'Fashion Week Awards', subtitle: 'Look mais marcante', accent: '#f06292', accent2: '#f8b4d0', bg: '#0a0005', surface: '#160010', text: '#ffe8f5', cardBg: '#120010' },
+      { cat: 'Moda & Beleza', icon: '💅', name: 'Melhor Look', title: 'Melhor Look da Temporada', subtitle: 'Fashion Icons', accent: '#ad1457', accent2: '#f48fb1', bg: '#0a000a', surface: '#160016', text: '#ffe8ff', cardBg: '#100010' },
+      { cat: 'Moda & Beleza', icon: '👠', name: 'Desfile', title: 'Melhor Coleção', subtitle: 'Votos da crítica e do público', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0004', surface: '#16000a', text: '#ffe8f0', cardBg: '#120006' },
+      { cat: 'Moda & Beleza', icon: '💄', name: 'Beleza', title: 'Beauty Awards', subtitle: 'O melhor da beleza', accent: '#ff6090', accent2: '#ffaac0', bg: '#0a0008', surface: '#180010', text: '#ffe8f4', cardBg: '#140010' },
+      { cat: 'Moda & Beleza', icon: '💍', name: 'Wedding', title: 'Melhor Coleção Noiva', subtitle: 'Inspiração para o grande dia', accent: '#f3e5f5', accent2: '#ffffff', bg: '#100a18', surface: '#180f20', text: '#ffffff', cardBg: '#150d1e' },
+      { cat: 'Moda & Beleza', icon: '👒', name: 'Chapéus', title: 'Hat of the Year', subtitle: 'O design mais icónico', accent: '#a0522d', accent2: '#d4a070', bg: '#080400', surface: '#120800', text: '#fff5e8', cardBg: '#0e0600' },
+      { cat: 'Moda & Beleza', icon: '🕶️', name: 'Acessórios', title: 'Best Accessories', subtitle: 'Style Defines', accent: '#ffd700', accent2: '#ffe880', bg: '#060400', surface: '#0e0900', text: '#fffce8', cardBg: '#0a0700' },
+      { cat: 'Moda & Beleza', icon: '👔', name: 'Men\'s Fashion', title: 'Best Men\'s Style', subtitle: 'Fashion Forward', accent: '#37474f', accent2: '#90a4ae', bg: '#06080a', surface: '#0c1014', text: '#eceff1', cardBg: '#0a0e12' },
+      { cat: 'Moda & Beleza', icon: '🌸', name: 'Primavera', title: 'Coleção Primavera', subtitle: 'As cores da estação', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#160010', text: '#ffe8f2', cardBg: '#120010' },
+      { cat: 'Moda & Beleza', icon: '❄️', name: 'Inverno', title: 'Coleção Inverno', subtitle: 'Elegância na estação fria', accent: '#90caf9', accent2: '#e3f2fd', bg: '#000a18', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
+      // ── GASTRONOMIA ──
+      { cat: 'Gastronomia', icon: '🍽️', name: 'Restaurante do Ano', title: 'Restaurante do Ano', subtitle: 'A escolha do público', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#150a00', text: '#fff8e8', cardBg: '#120700' },
+      { cat: 'Gastronomia', icon: '⭐', name: 'Estrelas Michelin', title: 'Estrela Michelin', subtitle: 'Excelência gastronómica', accent: '#f44336', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
+      { cat: 'Gastronomia', icon: '👨‍🍳', name: 'Chef do Ano', title: 'Chef do Ano', subtitle: 'Quem domina a cozinha?', accent: '#ffffff', accent2: '#e0e0e0', bg: '#0a0a0a', surface: '#141414', text: '#f5f5f5', cardBg: '#111111' },
+      { cat: 'Gastronomia', icon: '🍷', name: 'Melhor Vinho', title: 'Wine Awards', subtitle: 'O melhor vinho do ano', accent: '#7b1fa2', accent2: '#ce93d8', bg: '#08000f', surface: '#100018', text: '#f5e8ff', cardBg: '#0c0015' },
+      { cat: 'Gastronomia', icon: '🍕', name: 'Pizza', title: 'Melhor Pizza', subtitle: 'O público escolhe!', accent: '#ff5722', accent2: '#ff8a65', bg: '#0a0200', surface: '#150400', text: '#fff5f0', cardBg: '#100300' },
+      { cat: 'Gastronomia', icon: '🍺', name: 'Cerveja Artesanal', title: 'Cerveja do Ano', subtitle: 'Craft Beer Awards', accent: '#e65100', accent2: '#ffab40', bg: '#0a0300', surface: '#140600', text: '#fff8f0', cardBg: '#100400' },
+      { cat: 'Gastronomia', icon: '🍰', name: 'Pastelaria', title: 'Melhor Pastelaria', subtitle: 'A sobremesa dos sonhos', accent: '#f8bbd9', accent2: '#fce4ec', bg: '#0a0005', surface: '#180010', text: '#ffe8f4', cardBg: '#140010' },
+      { cat: 'Gastronomia', icon: '🌮', name: 'Street Food', title: 'Street Food Awards', subtitle: 'A comida de rua favorita', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0400', surface: '#150800', text: '#fff8e5', cardBg: '#0f0500' },
+      { cat: 'Gastronomia', icon: '🍣', name: 'Sushi', title: 'Melhor Restaurante Japonês', subtitle: 'Itadakimasu!', accent: '#ef5350', accent2: '#ef9a9a', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
+      { cat: 'Gastronomia', icon: '☕', name: 'Café', title: 'Melhor Café', subtitle: 'O espresso perfeito', accent: '#795548', accent2: '#bcaaa4', bg: '#050300', surface: '#0c0700', text: '#f5ece5', cardBg: '#080500' },
+      // ── NEGÓCIOS & EMPRESA ──
+      { cat: 'Negócios', icon: '🏢', name: 'Empresa do Ano', title: 'Empresa do Ano', subtitle: 'Excelência empresarial', accent: '#1565c0', accent2: '#90caf9', bg: '#000812', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
+      { cat: 'Negócios', icon: '💼', name: 'CEO do Ano', title: 'CEO do Ano', subtitle: 'Liderança de excelência', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
+      { cat: 'Negócios', icon: '🚀', name: 'Startup', title: 'Best Startup', subtitle: 'Innovation of the Year', accent: '#00e5ff', accent2: '#80f4ff', bg: '#000d15', surface: '#001520', text: '#e0faff', cardBg: '#001018' },
+      { cat: 'Negócios', icon: '💡', name: 'Inovação', title: 'Prémio Inovação', subtitle: 'A ideia do ano', accent: '#ffd600', accent2: '#ffee80', bg: '#060500', surface: '#0e0a00', text: '#fffce0', cardBg: '#0a0800' },
+      { cat: 'Negócios', icon: '🌍', name: 'Sustentabilidade', title: 'ESG Awards', subtitle: 'Empresas mais sustentáveis', accent: '#66bb6a', accent2: '#a5d6a7', bg: '#001500', surface: '#001f00', text: '#e8ffe8', cardBg: '#001a00' },
+      { cat: 'Negócios', icon: '📈', name: 'Crescimento', title: 'Fastest Growing Company', subtitle: 'Annual Business Awards', accent: '#26c6da', accent2: '#80deea', bg: '#001218', surface: '#001a20', text: '#e0f8ff', cardBg: '#001618' },
+      { cat: 'Negócios', icon: '🤝', name: 'Parceria', title: 'Best Partnership', subtitle: 'Strategic Alliance of the Year', accent: '#ab47bc', accent2: '#ce93d8', bg: '#060010', surface: '#0d0020', text: '#f5e8ff', cardBg: '#09001a' },
+      { cat: 'Negócios', icon: '🏦', name: 'Finanças', title: 'Finance Awards', subtitle: 'Best Financial Institution', accent: '#1a237e', accent2: '#7986cb', bg: '#000218', surface: '#000628', text: '#e8eaff', cardBg: '#000520' },
+      { cat: 'Negócios', icon: '⚙️', name: 'Indústria', title: 'Industry Excellence Award', subtitle: 'Manufacturing & Production', accent: '#546e7a', accent2: '#b0bec5', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
+      { cat: 'Negócios', icon: '🛒', name: 'Retalho', title: 'Best Retailer', subtitle: 'Customer Choice Award', accent: '#f57c00', accent2: '#ffcc02', bg: '#0a0500', surface: '#150a00', text: '#fff8e0', cardBg: '#100700' },
+      // ── EDUCAÇÃO ──
+      { cat: 'Educação', icon: '🎓', name: 'Melhor Professor', title: 'Professor do Ano', subtitle: 'Inspirar é transformar', accent: '#1976d2', accent2: '#90caf9', bg: '#000a1a', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
+      { cat: 'Educação', icon: '📚', name: 'Livro do Ano', title: 'Livro do Ano', subtitle: 'A leitura favorita', accent: '#8d6e63', accent2: '#bcaaa4', bg: '#060302', surface: '#0e0806', text: '#f5ece8', cardBg: '#0a0605' },
+      { cat: 'Educação', icon: '🔬', name: 'Ciência', title: 'Science Award', subtitle: 'Descoberta do Ano', accent: '#00acc1', accent2: '#80deea', bg: '#001218', surface: '#001a20', text: '#e0f8ff', cardBg: '#001618' },
+      { cat: 'Educação', icon: '🏫', name: 'Escola do Ano', title: 'Escola do Ano', subtitle: 'Excelência académica', accent: '#43a047', accent2: '#a5d6a7', bg: '#001400', surface: '#002000', text: '#e8ffe8', cardBg: '#001800' },
+      { cat: 'Educação', icon: '🧪', name: 'Inovação Educativa', title: 'EdTech Award', subtitle: 'O futuro da educação', accent: '#7c4dff', accent2: '#b39ddb', bg: '#060018', surface: '#0c0030', text: '#ede8ff', cardBg: '#090025' },
+      { cat: 'Educação', icon: '🌐', name: 'Língua', title: 'Melhor Curso de Línguas', subtitle: 'Language Learning Award', accent: '#0097a7', accent2: '#80deea', bg: '#000e14', surface: '#001520', text: '#e0f8ff', cardBg: '#001018' },
+      { cat: 'Educação', icon: '🎨', name: 'Arte', title: 'Prémio de Arte Jovem', subtitle: 'Os novos talentos', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#150000', text: '#fff0f0', cardBg: '#0c0000' },
+      // ── ENTRETENIMENTO ──
+      { cat: 'Entretenimento', icon: '🎭', name: 'Comédia', title: 'Melhor Comediante', subtitle: 'Quem te faz rir mais?', accent: '#ffca28', accent2: '#fff176', bg: '#080600', surface: '#110e00', text: '#fffce5', cardBg: '#0d0a00' },
+      { cat: 'Entretenimento', icon: '🎪', name: 'Circo', title: 'Best Circus Act', subtitle: 'The Most Spectacular Show', accent: '#e53935', accent2: '#ff8a80', bg: '#0a0000', surface: '#160000', text: '#fff0f0', cardBg: '#120000' },
+      { cat: 'Entretenimento', icon: '🃏', name: 'Stand-Up', title: 'Stand-Up Comedy Awards', subtitle: 'O comediante do ano', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#150a00', text: '#fff8e8', cardBg: '#0f0600' },
+      { cat: 'Entretenimento', icon: '🎠', name: 'Parque Temático', title: 'Melhor Parque Temático', subtitle: 'Diversão para toda a família', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0008', surface: '#150010', text: '#ffe8f4', cardBg: '#10000e' },
+      { cat: 'Entretenimento', icon: '🎲', name: 'Jogos', title: 'Board Game of the Year', subtitle: 'The Game that Conquered Tables', accent: '#3949ab', accent2: '#9fa8da', bg: '#000515', surface: '#000a20', text: '#e8eaff', cardBg: '#000818' },
+      { cat: 'Entretenimento', icon: '🌈', name: 'Espetáculo', title: 'Best Live Show', subtitle: 'The Performance of the Year', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a000a', surface: '#150015', text: '#ffe8ff', cardBg: '#100010' },
+      { cat: 'Entretenimento', icon: '🎉', name: 'Festa do Ano', title: 'Evento do Ano', subtitle: 'A festa mais falada', accent: '#ffd600', accent2: '#ffe57f', bg: '#060500', surface: '#0e0a00', text: '#fffce5', cardBg: '#0a0800' },
+      { cat: 'Entretenimento', icon: '🤡', name: 'Animação Infantil', title: 'Melhor Animador Infantil', subtitle: 'Os pequenos escolhem!', accent: '#ff5722', accent2: '#ff8a65', bg: '#0a0200', surface: '#180600', text: '#fff5ee', cardBg: '#140400' },
+      // ── SOCIAL & COMUNIDADE ──
+      { cat: 'Social', icon: '🌍', name: 'Voluntário do Ano', title: 'Voluntário do Ano', subtitle: 'Heróis da comunidade', accent: '#43a047', accent2: '#a5d6a7', bg: '#001400', surface: '#001f00', text: '#e8ffe8', cardBg: '#001800' },
+      { cat: 'Social', icon: '❤️', name: 'Influencer Social', title: 'Influencer Social', subtitle: 'Quem mais impacto positivo criou?', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#120000' },
+      { cat: 'Social', icon: '🏘️', name: 'Bairro do Ano', title: 'Bairro do Ano', subtitle: 'A comunidade vota', accent: '#66bb6a', accent2: '#c8e6c9', bg: '#001200', surface: '#001c00', text: '#e8ffe8', cardBg: '#001600' },
+      { cat: 'Social', icon: '🤲', name: 'ONG', title: 'Melhor ONG', subtitle: 'Impacto social real', accent: '#1e88e5', accent2: '#90caf9', bg: '#000a18', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
+      { cat: 'Social', icon: '🌿', name: 'Eco Award', title: 'Eco Award', subtitle: 'Quem protege o planeta?', accent: '#2e7d32', accent2: '#81c784', bg: '#001000', surface: '#001800', text: '#e8ffe8', cardBg: '#001400' },
+      { cat: 'Social', icon: '👨‍👩‍👧', name: 'Família', title: 'Família do Ano', subtitle: 'Inspiração para todos', accent: '#ff8f00', accent2: '#ffd54f', bg: '#080500', surface: '#120900', text: '#fff8e8', cardBg: '#0e0700' },
+      // ── TECNOLOGIA ──
+      { cat: 'Tecnologia', icon: '💻', name: 'App do Ano', title: 'App of the Year', subtitle: 'A aplicação favorita', accent: '#2196f3', accent2: '#90caf9', bg: '#000a18', surface: '#001525', text: '#e8f4ff', cardBg: '#001020' },
+      { cat: 'Tecnologia', icon: '🤖', name: 'IA', title: 'Best AI Product', subtitle: 'The Future is Now', accent: '#00e5ff', accent2: '#80f4ff', bg: '#000d15', surface: '#001520', text: '#e0faff', cardBg: '#001018' },
+      { cat: 'Tecnologia', icon: '📱', name: 'Smartphone', title: 'Smartphone of the Year', subtitle: 'Best Mobile Device', accent: '#607d8b', accent2: '#b0bec5', bg: '#04060a', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
+      { cat: 'Tecnologia', icon: '🔋', name: 'Energia Verde', title: 'Clean Energy Award', subtitle: 'Sustainable Technology', accent: '#00c853', accent2: '#69f0ae', bg: '#001a08', surface: '#002410', text: '#e8fff2', cardBg: '#001e0c' },
+      { cat: 'Tecnologia', icon: '🛸', name: 'Espaço', title: 'Space Innovation Award', subtitle: 'To Infinity and Beyond', accent: '#7e57c2', accent2: '#b39ddb', bg: '#04001a', surface: '#08002a', text: '#ede8ff', cardBg: '#060020' },
+      { cat: 'Tecnologia', icon: '🔐', name: 'Cibersegurança', title: 'Cybersecurity Award', subtitle: 'Best Defense Platform', accent: '#ff3d00', accent2: '#ff8a65', bg: '#0a0100', surface: '#150200', text: '#fff5f0', cardBg: '#100100' },
+      { cat: 'Tecnologia', icon: '🎮', name: 'Gaming', title: 'Game Developers Choice', subtitle: 'Best Indie Game', accent: '#9c27b0', accent2: '#ce93d8', bg: '#060010', surface: '#0c001c', text: '#f5e8ff', cardBg: '#090015' },
+      // ── POLÍTICA & SOCIEDADE ──
+      { cat: 'Sociedade', icon: '🗳️', name: 'Eleições', title: 'Escolha do Povo', subtitle: 'A democracia em acção', accent: '#1565c0', accent2: '#90caf9', bg: '#000818', surface: '#001028', text: '#e8f4ff', cardBg: '#000e20' },
+      { cat: 'Sociedade', icon: '🏛️', name: 'Câmara Municipal', title: 'Melhor Projeto Municipal', subtitle: 'Vote no melhor projeto', accent: '#795548', accent2: '#bcaaa4', bg: '#060300', surface: '#0e0800', text: '#f5ece5', cardBg: '#0a0500' },
+      { cat: 'Sociedade', icon: '⚖️', name: 'Justiça', title: 'Prémio de Justiça', subtitle: 'Excelência jurídica', accent: '#546e7a', accent2: '#b0bec5', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
+      { cat: 'Sociedade', icon: '📰', name: 'Jornalismo', title: 'Prémio de Jornalismo', subtitle: 'A melhor reportagem do ano', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#060504', surface: '#0d0a08', text: '#f5f0e8', cardBg: '#0a0806' },
+      { cat: 'Sociedade', icon: '🌐', name: 'Diplomacia', title: 'Global Leadership Award', subtitle: 'Making the World Better', accent: '#26a69a', accent2: '#80cbc4', bg: '#000e0d', surface: '#001818', text: '#e0f8f5', cardBg: '#001414' },
+      // ── NATUREZA & ANIMAIS ──
+      { cat: 'Natureza', icon: '🐾', name: 'Animal do Ano', title: 'Animal do Ano', subtitle: 'Vote no seu favorito', accent: '#8d6e63', accent2: '#d7bca8', bg: '#060302', surface: '#0e0806', text: '#f5ece8', cardBg: '#0a0605' },
+      { cat: 'Natureza', icon: '🦁', name: 'Safari', title: 'Wildlife Photo Award', subtitle: 'Best Nature Photography', accent: '#f57f17', accent2: '#ffcc02', bg: '#080500', surface: '#110a00', text: '#fffce5', cardBg: '#0d0700' },
+      { cat: 'Natureza', icon: '🌺', name: 'Jardim', title: 'Melhor Jardim', subtitle: 'Natureza em flor', accent: '#f06292', accent2: '#f8bbd0', bg: '#0a0006', surface: '#160010', text: '#ffe8f4', cardBg: '#12000e' },
+      { cat: 'Natureza', icon: '🌊', name: 'Oceano', title: 'Ocean Award', subtitle: 'Protecting Our Seas', accent: '#0288d1', accent2: '#81d4fa', bg: '#000a18', surface: '#001528', text: '#e0f4ff', cardBg: '#001020' },
+      { cat: 'Natureza', icon: '🏔️', name: 'Montanha', title: 'Best Mountain Resort', subtitle: 'Peak Experience', accent: '#546e7a', accent2: '#b0bec5', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
+      // ── TURISMO ──
+      { cat: 'Turismo', icon: '✈️', name: 'Destino do Ano', title: 'Destino do Ano', subtitle: 'Onde querem viajar?', accent: '#26c6da', accent2: '#80deea', bg: '#001218', surface: '#001a25', text: '#e0f8ff', cardBg: '#001618' },
+      { cat: 'Turismo', icon: '🏨', name: 'Hotel do Ano', title: 'Hotel of the Year', subtitle: 'Best Hospitality', accent: '#c9a84c', accent2: '#e8d5a3', bg: '#070600', surface: '#100e00', text: '#f5f0e5', cardBg: '#0c0a00' },
+      { cat: 'Turismo', icon: '🗺️', name: 'Guia do Ano', title: 'Best Travel Guide', subtitle: 'Your Trusted Travel Companion', accent: '#ff7043', accent2: '#ffab91', bg: '#0a0300', surface: '#150600', text: '#fff5f0', cardBg: '#100400' },
+      { cat: 'Turismo', icon: '🍾', name: 'Cruzeiro', title: 'Best Cruise Line', subtitle: 'Sailing in Luxury', accent: '#0288d1', accent2: '#81d4fa', bg: '#000a18', surface: '#001520', text: '#e0f4ff', cardBg: '#001020' },
+      { cat: 'Turismo', icon: '⛺', name: 'Camping', title: 'Best Camping Experience', subtitle: 'Back to Nature', accent: '#558b2f', accent2: '#aed581', bg: '#010e00', surface: '#021600', text: '#f0ffe0', cardBg: '#011200' },
+      { cat: 'Turismo', icon: '🗽', name: 'Cidade', title: 'Melhor Cidade para Visitar', subtitle: 'The World is Yours', accent: '#42a5f5', accent2: '#90caf9', bg: '#000a18', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
+      // ── SAÚDE & BEM-ESTAR ──
+      { cat: 'Saúde', icon: '💊', name: 'Farmácia', title: 'Melhor Farmácia', subtitle: 'Cuidar é uma arte', accent: '#00897b', accent2: '#80cbc4', bg: '#000e0d', surface: '#001818', text: '#e0f8f5', cardBg: '#001414' },
+      { cat: 'Saúde', icon: '🏥', name: 'Hospital', title: 'Hospital do Ano', subtitle: 'Excelência em saúde', accent: '#1e88e5', accent2: '#90caf9', bg: '#000a18', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
+      { cat: 'Saúde', icon: '🧘', name: 'Bem-Estar', title: 'Wellness Awards', subtitle: 'Corpo e mente em harmonia', accent: '#80cbc4', accent2: '#b2dfdb', bg: '#001212', surface: '#001c1c', text: '#e0f8f5', cardBg: '#001616' },
+      { cat: 'Saúde', icon: '🏃', name: 'Running', title: 'Corrida do Ano', subtitle: 'O atleta mais inspirador', accent: '#ff7043', accent2: '#ffab91', bg: '#0a0200', surface: '#160400', text: '#fff5f0', cardBg: '#120300' },
+      { cat: 'Saúde', icon: '🥗', name: 'Nutrição', title: 'Best Nutritionist', subtitle: 'Saúde começa no prato', accent: '#66bb6a', accent2: '#c8e6c9', bg: '#001200', surface: '#001c00', text: '#e8ffe8', cardBg: '#001600' },
+      // ── ARTES VISUAIS ──
+      { cat: 'Artes', icon: '🎨', name: 'Pintura', title: 'Prémio de Pintura', subtitle: 'A obra mais marcante', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#120000' },
+      { cat: 'Artes', icon: '🖼️', name: 'Galeria', title: 'Gallery of the Year', subtitle: 'Best Exhibition', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#060504', surface: '#0c0a08', text: '#f5f0e5', cardBg: '#0a0806' },
+      { cat: 'Artes', icon: '📸', name: 'Fotografia', title: 'Fotógrafo do Ano', subtitle: 'A imagem que marcou', accent: '#9e9e9e', accent2: '#e0e0e0', bg: '#060606', surface: '#0e0e0e', text: '#f5f5f5', cardBg: '#0c0c0c' },
+      { cat: 'Artes', icon: '✏️', name: 'Ilustração', title: 'Best Illustration', subtitle: 'Art that Speaks', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#160a00', text: '#fff8e5', cardBg: '#120700' },
+      { cat: 'Artes', icon: '🏺', name: 'Escultura', title: 'Sculpture Award', subtitle: 'Best 3D Work', accent: '#8d6e63', accent2: '#d7bca8', bg: '#050302', surface: '#0c0806', text: '#f5ece5', cardBg: '#090605' },
+      { cat: 'Artes', icon: '🎭', name: 'Dança', title: 'Melhor Companhia de Dança', subtitle: 'O movimento como arte', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#180010', text: '#ffe8f4', cardBg: '#140010' },
+      { cat: 'Artes', icon: '📖', name: 'Literatura', title: 'Prémio Literário', subtitle: 'A melhor obra do ano', accent: '#5d4037', accent2: '#a1887f', bg: '#060302', surface: '#0e0806', text: '#f5ece8', cardBg: '#0a0605' },
+      { cat: 'Artes', icon: '🎪', name: 'Performance', title: 'Best Performance Art', subtitle: 'Pushing the Boundaries', accent: '#7c4dff', accent2: '#b39ddb', bg: '#060018', surface: '#0c0028', text: '#ede8ff', cardBg: '#090020' },
+      // ── RELIGIÃO & TRADIÇÃO ──
+      { cat: 'Tradição', icon: '⛪', name: 'Paróquia', title: 'Melhor Festa de Paróquia', subtitle: 'A tradição que une', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
+      { cat: 'Tradição', icon: '🎊', name: 'Carnaval', title: 'Melhor Grupo de Carnaval', subtitle: 'A alegria em competição', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a000a', surface: '#180015', text: '#ffe8ff', cardBg: '#120010' },
+      { cat: 'Tradição', icon: '🕯️', name: 'Festas Populares', title: 'Melhor Arraial', subtitle: 'Santos Populares', accent: '#ff6d00', accent2: '#ffab40', bg: '#0a0300', surface: '#150600', text: '#fff5e5', cardBg: '#100400' },
+      { cat: 'Tradição', icon: '🌙', name: 'Ramadão', title: 'Celebração do Ramadão', subtitle: 'Unidade e espiritualidade', accent: '#1a6e3c', accent2: '#80cbc4', bg: '#000e08', surface: '#001510', text: '#e8fff5', cardBg: '#001210' },
+      { cat: 'Tradição', icon: '🎋', name: 'Festival Oriental', title: 'Oriental Festival', subtitle: 'East meets West', accent: '#c62828', accent2: '#ef9a9a', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
+      // ── ESPECIAIS ──
+      { cat: 'Especial', icon: '🌟', name: 'Gala de Natal', title: 'Gala de Natal', subtitle: 'A magia do Natal', accent: '#c62828', accent2: '#ef9a9a', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
+      { cat: 'Especial', icon: '🎇', name: 'Ano Novo', title: 'Fim de Ano', subtitle: 'A escolha do ano que passou', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#0e0900', text: '#fffce5', cardBg: '#0a0700' },
+      { cat: 'Especial', icon: '💝', name: 'Dia dos Namorados', title: 'Casal do Ano', subtitle: 'O amor vence', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#180010', text: '#ffe8f2', cardBg: '#140010' },
+      { cat: 'Especial', icon: '🎃', name: 'Halloween', title: 'Melhor Fantasia', subtitle: 'Trick or Treat!', accent: '#ff6d00', accent2: '#ffab40', bg: '#060200', surface: '#0f0500', text: '#fff5e5', cardBg: '#0c0300' },
+      { cat: 'Especial', icon: '🌸', name: 'Primavera', title: 'Festival de Primavera', subtitle: 'A estação mais colorida', accent: '#e91e63', accent2: '#f8bbd9', bg: '#0a0005', surface: '#180012', text: '#ffe8f4', cardBg: '#140010' },
+      { cat: 'Especial', icon: '🏖️', name: 'Verão', title: 'Festival de Verão', subtitle: 'A estação mais quente', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#180a00', text: '#fff8e5', cardBg: '#130700' },
+      { cat: 'Especial', icon: '🍂', name: 'Outono', title: 'Festival de Outono', subtitle: 'A estação das colheitas', accent: '#e65100', accent2: '#ffab40', bg: '#0a0300', surface: '#160600', text: '#fff5e0', cardBg: '#110400' },
+      { cat: 'Especial', icon: '❄️', name: 'Inverno', title: 'Festival de Inverno', subtitle: 'A magia da neve', accent: '#90caf9', accent2: '#e3f2fd', bg: '#000a18', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
+      { cat: 'Especial', icon: '🎓', name: 'Formatura', title: 'Cerimónia de Formatura', subtitle: 'Os melhores alunos', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
+      { cat: 'Especial', icon: '🎖️', name: 'Gala Militar', title: 'Gala das Forças Armadas', subtitle: 'Serviço e Honra', accent: '#546e7a', accent2: '#90a4ae', bg: '#040608', surface: '#080c10', text: '#eceff1', cardBg: '#060a0e' },
+      { cat: 'Especial', icon: '🏅', name: 'Gala Anual', title: 'Gala Anual', subtitle: 'Celebrando os melhores momentos', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#0e0900', text: '#fffce5', cardBg: '#0a0800' },
+      { cat: 'Especial', icon: '✨', name: 'Prémio Especial', title: 'Prémio Especial', subtitle: 'Uma homenagem única', accent: '#e8d5a3', accent2: '#fff8e8', bg: '#03020a', surface: '#07060f', text: '#f5f0e8', cardBg: '#06050e' },
+      // ── MEDIA & DIGITAL ──
+      { cat: 'Media', icon: '📱', name: 'Influencer', title: 'Influencer do Ano', subtitle: 'Quem domina as redes?', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a0008', surface: '#180015', text: '#ffe8ff', cardBg: '#120010' },
+      { cat: 'Media', icon: '🎙️', name: 'Podcast', title: 'Podcast do Ano', subtitle: 'O episódio que não perdeste', accent: '#7c4dff', accent2: '#b39ddb', bg: '#060018', surface: '#0c0028', text: '#ede8ff', cardBg: '#090020' },
+      { cat: 'Media', icon: '📰', name: 'Blog', title: 'Blog do Ano', subtitle: 'O conteúdo que inspirou', accent: '#00acc1', accent2: '#80deea', bg: '#001214', surface: '#001820', text: '#e0f8ff', cardBg: '#001618' },
+      { cat: 'Media', icon: '📺', name: 'Canal YouTube', title: 'Canal do Ano', subtitle: 'O criador favorito', accent: '#f44336', accent2: '#ff8a80', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
+      { cat: 'Media', icon: '🔊', name: 'Rádio', title: 'Estação de Rádio do Ano', subtitle: 'O programa que deu para ouvir', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#160a00', text: '#fff8e5', cardBg: '#100600' },
+      { cat: 'Media', icon: '📷', name: 'Instagram', title: 'Best Instagram Account', subtitle: 'Most Creative Feed', accent: '#e1306c', accent2: '#f77737', bg: '#0a0004', surface: '#160008', text: '#ffe8f2', cardBg: '#120006' },
+      { cat: 'Media', icon: '🎞️', name: 'TikTok', title: 'TikTok Creator of the Year', subtitle: 'Best Short-Form Content', accent: '#69c9d0', accent2: '#b0e8ea', bg: '#000a0a', surface: '#001212', text: '#e0f8f8', cardBg: '#001010' },
+      // ── REGIONAL & NACIONAL ──
+      { cat: 'Regional', icon: '🇵🇹', name: 'Portugal', title: 'Portugal em Destaque', subtitle: 'O melhor de Portugal', accent: '#006600', accent2: '#cc0000', bg: '#001200', surface: '#002000', text: '#e8ffe8', cardBg: '#001a00' },
+      { cat: 'Regional', icon: '🌊', name: 'Algarve', title: 'Melhor do Algarve', subtitle: 'A joia do sul', accent: '#ff6d00', accent2: '#ffab40', bg: '#0a0400', surface: '#180800', text: '#fff5e5', cardBg: '#130500' },
+      { cat: 'Regional', icon: '🏙️', name: 'Lisboa', title: 'Lisboa em Foco', subtitle: 'A capital em destaque', accent: '#1565c0', accent2: '#90caf9', bg: '#000812', surface: '#001020', text: '#e8f4ff', cardBg: '#000e1a' },
+      { cat: 'Regional', icon: '🎸', name: 'Porto', title: 'Porto na Ribeira', subtitle: 'A cidade invicta', accent: '#b71c1c', accent2: '#ef9a9a', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
+      { cat: 'Regional', icon: '🌿', name: 'Açores', title: 'Festival dos Açores', subtitle: 'A beleza das ilhas', accent: '#2e7d32', accent2: '#81c784', bg: '#001000', surface: '#001800', text: '#e8ffe8', cardBg: '#001400' },
+      { cat: 'Regional', icon: '🌊', name: 'Madeira', title: 'Festival da Madeira', subtitle: 'A ilha das flores', accent: '#ad1457', accent2: '#f48fb1', bg: '#0a000a', surface: '#180016', text: '#ffe8ff', cardBg: '#120010' },
+      // ── KIDS & FAMÍLIA ──
+      { cat: 'Kids', icon: '🧒', name: 'Criança', title: 'Talento Jovem', subtitle: 'As estrelas do amanhã', accent: '#ff9800', accent2: '#ffcc80', bg: '#0a0500', surface: '#180a00', text: '#fff8e5', cardBg: '#130700' },
+      { cat: 'Kids', icon: '📚', name: 'Livro Infantil', title: 'Melhor Livro Infantil', subtitle: 'A história favorita das crianças', accent: '#ff5722', accent2: '#ff8a65', bg: '#0a0200', surface: '#180500', text: '#fff5f0', cardBg: '#130300' },
+      { cat: 'Kids', icon: '🧸', name: 'Brinquedo', title: 'Toy of the Year', subtitle: 'O brinquedo mais querido', accent: '#f06292', accent2: '#f8bbd0', bg: '#0a0005', surface: '#180010', text: '#ffe8f4', cardBg: '#120010' },
+      { cat: 'Kids', icon: '🎒', name: 'Escola Primária', title: 'Escola Primária do Ano', subtitle: 'A escola dos sonhos', accent: '#43a047', accent2: '#a5d6a7', bg: '#001400', surface: '#002000', text: '#e8ffe8', cardBg: '#001800' },
+      { cat: 'Kids', icon: '🎠', name: 'Parque Infantil', title: 'Melhor Parque Infantil', subtitle: 'Diversão em segurança', accent: '#26c6da', accent2: '#80deea', bg: '#001218', surface: '#001a20', text: '#e0f8ff', cardBg: '#001618' },
+      // ── LUXO ──
+      { cat: 'Luxo', icon: '💎', name: 'Diamante', title: 'Diamond Awards', subtitle: 'Only the Best', accent: '#e8d5a3', accent2: '#ffffff', bg: '#03020a', surface: '#070610', text: '#f5f0ff', cardBg: '#06050e' },
+      { cat: 'Luxo', icon: '🚗', name: 'Automóvel', title: 'Car of the Year', subtitle: 'Luxury & Performance', accent: '#c4973a', accent2: '#e8d5a3', bg: '#04040a', surface: '#080814', text: '#ede9e0', cardBg: '#0a0a16' },
+      { cat: 'Luxo', icon: '⌚', name: 'Relógio', title: 'Watch of the Year', subtitle: 'Craftsmanship at its Finest', accent: '#c4973a', accent2: '#e8d5a3', bg: '#040304', surface: '#0a0a0a', text: '#f5f5f0', cardBg: '#0c0c0c' },
+      { cat: 'Luxo', icon: '🛥️', name: 'Yatch', title: 'Yacht of the Year', subtitle: 'Sailing in Style', accent: '#e0f4ff', accent2: '#ffffff', bg: '#000a18', surface: '#001025', text: '#e8f4ff', cardBg: '#000e20' },
+      { cat: 'Luxo', icon: '🏰', name: 'Palácio', title: 'Best Luxury Property', subtitle: 'Living Like Royalty', accent: '#c9a84c', accent2: '#e8d5a3', bg: '#060400', surface: '#100900', text: '#f5f0e8', cardBg: '#0c0700' },
+      // ── COR ÚNICA ──
+      { cat: 'Cor Única', icon: '🟠', name: 'Laranja Neon', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ff5a00', accent2: '#ff8f40', bg: '#070200', surface: '#100500', text: '#fff5f0', cardBg: '#0d0400' },
+      { cat: 'Cor Única', icon: '🟣', name: 'Roxo Profundo', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#9c27b0', accent2: '#ce93d8', bg: '#060010', surface: '#0e001e', text: '#f5e8ff', cardBg: '#09001a' },
+      { cat: 'Cor Única', icon: '🔵', name: 'Azul Elétrico', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#2979ff', accent2: '#82b1ff', bg: '#000818', surface: '#001030', text: '#e8f4ff', cardBg: '#000e28' },
+      { cat: 'Cor Única', icon: '🟢', name: 'Verde Néon', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#00e676', accent2: '#69f0ae', bg: '#001a08', surface: '#002412', text: '#e8fff2', cardBg: '#001e0c' },
+      { cat: 'Cor Única', icon: '🔴', name: 'Vermelho Sangue', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ff1744', accent2: '#ff7070', bg: '#0a0000', surface: '#180000', text: '#fff0f0', cardBg: '#130000' },
+      { cat: 'Cor Única', icon: '⚪', name: 'Branco Puro', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ffffff', accent2: '#e0e0e0', bg: '#0a0a0a', surface: '#141414', text: '#f5f5f5', cardBg: '#111111' },
+      { cat: 'Cor Única', icon: '🟡', name: 'Dourado Real', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ffd600', accent2: '#ffee80', bg: '#060400', surface: '#100a00', text: '#fffce5', cardBg: '#0a0800' },
+      { cat: 'Cor Única', icon: '🩷', name: 'Rosa Quente', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#ff4081', accent2: '#ff80ab', bg: '#0a0008', surface: '#180015', text: '#ffe8ff', cardBg: '#130010' },
+      { cat: 'Cor Única', icon: '🩵', name: 'Ciano Gelo', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#00e5ff', accent2: '#80f4ff', bg: '#000d15', surface: '#001522', text: '#e0faff', cardBg: '#001018' },
+      { cat: 'Cor Única', icon: '🤎', name: 'Bronze Vintage', title: 'Votação', subtitle: 'Escolhe o favorito', accent: '#a0522d', accent2: '#d4a070', bg: '#060300', surface: '#0e0800', text: '#fff5e8', cardBg: '#0a0500' },
+    ];
+
+    window.ALL_TEMPLATES = TEMPLATES;
+
+    /* ── BUILD TEMPLATE GRID ── */
+    function buildTemplateGrid(filter = '', catFilter = 'all') {
+      const grid = document.getElementById('templateGrid');
+      if (!grid) return;
+      const cats = [...new Set(TEMPLATES.map(t => t.cat))];
+      // Build category tabs
+      const tabsEl = document.getElementById('templateCats');
+      if (tabsEl && tabsEl.dataset.built !== '1') {
+        tabsEl.innerHTML = '';
+        const all = document.createElement('button');
+        all.className = 'cat-tab active';
+        all.textContent = 'Todos';
+        all.dataset.cat = 'all';
+        all.onclick = () => { filterTemplates('', 'all'); document.getElementById('templateSearch').value = ''; };
+        tabsEl.appendChild(all);
+        cats.forEach(c => {
+          const btn = document.createElement('button');
+          btn.className = 'cat-tab';
+          btn.textContent = c;
+          btn.dataset.cat = c;
+          btn.onclick = () => { filterTemplates(document.getElementById('templateSearch').value, c); };
+          tabsEl.appendChild(btn);
+        });
+        tabsEl.dataset.built = '1';
+      }
+
+      const filtered = TEMPLATES.filter(t => {
+        const matchSearch = !filter || t.name.toLowerCase().includes(filter.toLowerCase()) || t.title.toLowerCase().includes(filter.toLowerCase()) || t.cat.toLowerCase().includes(filter.toLowerCase());
+        const matchCat = catFilter === 'all' || t.cat === catFilter;
+        return matchSearch && matchCat;
+      });
+
+      grid.innerHTML = '';
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div class="no-results">Nenhum template encontrado.</div>';
+        return;
+      }
+
+      filtered.forEach((t, i) => {
+        const card = document.createElement('div');
+        card.className = 'template-card';
+        card.style.cssText = `--tc-accent:${t.accent};--tc-bg:${t.bg};--tc-text:${t.text};`;
+        card.innerHTML = `
+          <div class="tc-preview">
+            <div class="tc-dot"></div>
+            <div class="tc-lines">
+              <div class="tc-line tc-line--title"></div>
+              <div class="tc-line tc-line--sub"></div>
+            </div>
+            <div class="tc-swatch">
+              <span class="tc-emoji">${t.icon}</span>
+            </div>
+          </div>
+          <div class="tc-info">
+            <div class="tc-name">${t.name}</div>
+            <div class="tc-cat">${t.cat}</div>
+          </div>
+        `;
+        card.onclick = () => applyTemplate(t, card);
+        grid.appendChild(card);
+      });
+    }
+
+    window.filterTemplates = function (search, cat) {
+      // Update active tab
+      document.querySelectorAll('.cat-tab').forEach(b => {
+        b.classList.toggle('active', b.dataset.cat === cat || (!cat && b.dataset.cat === 'all'));
+      });
+      buildTemplateGrid(search, cat || 'all');
+    };
+
+    window.searchTemplates = function (val) {
+      const activeCat = document.querySelector('.cat-tab.active')?.dataset.cat || 'all';
+      buildTemplateGrid(val, activeCat);
+    };
+
+    async function applyTemplate(t, card) {
+      // Populate theme fields
+      setColorField('t_bg', t.bg);
+      setColorField('t_surface', t.surface || '#0d0c1a');
+      setColorField('t_accent', t.accent);
+      setColorField('t_accent2', t.accent2);
+      setColorField('t_text', t.text);
+      setColorField('t_cardBg', t.cardBg || t.bg);
+      // Always overwrite event info fields
+      document.getElementById('f_title').value = t.title;
+      document.getElementById('f_subtitle').value = t.subtitle;
+      // Visual feedback immediately
+      document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      updatePreview();
+      // Show applying state
+      showToast(`⟳ A aplicar "${t.name}"…`);
+      // Save theme to Firebase
+      const theme = {
+        bg: t.bg,
+        surface: t.surface || '#0d0c1a',
+        accent: t.accent,
+        accent2: t.accent2,
+        text: t.text,
+        cardBg: t.cardBg || t.bg,
+      };
+      await set(ref(db, 'config/theme'), theme);
+      // Save event info to Firebase
+      await set(ref(db, 'config/title'), t.title);
+      await set(ref(db, 'config/subtitle'), t.subtitle);
+      showToast(`✦ Template "${t.name}" aplicado!`);
+    }
+
+    window.applyPreset = applyTemplate.bind(null); // legacy compat
+
+    /* ── LIVE PREVIEW ── */
+    function updatePreview() {
+      const bg = document.getElementById('t_bg')?.value || '#07060e';
+      const accent = document.getElementById('t_accent')?.value || '#c4973a';
+      const accent2 = document.getElementById('t_accent2')?.value || '#e8d5a3';
+      const text = document.getElementById('t_text')?.value || '#ede9e0';
+      const cardBg = document.getElementById('t_cardBg')?.value || '#0e0d1c';
+      const prev = document.getElementById('themePreview');
+      if (prev) {
+        prev.style.background = bg;
+        prev.style.setProperty('--pa', accent);
+        prev.style.setProperty('--pa2', accent2);
+        prev.style.setProperty('--pt', text);
+        prev.style.setProperty('--pcb', cardBg);
+      }
+    }
+
+    window.syncColorPicker = function (textId, pickerId) {
+      const val = document.getElementById(textId)?.value;
+      if (val && /^#[0-9a-f]{6}$/i.test(val)) {
+        const picker = document.getElementById(pickerId);
+        if (picker) picker.value = val;
+      }
+      updatePreview();
+    };
+
+    window.syncTextField = function (pickerId, textId) {
+      const val = document.getElementById(pickerId)?.value;
+      const textEl = document.getElementById(textId);
+      if (textEl) textEl.value = val;
+      updatePreview();
+    };
+
+    /* ── CANDIDATES ── */
+    function renderCandidateList() {
+      const list = document.getElementById('candidateList');
+      list.innerHTML = '';
+      document.getElementById('candidateCount').textContent = candidates.length + ' candidatos';
+      if (candidates.length === 0) {
+        list.innerHTML = '<div class="empty-list">Nenhum candidato. Adiciona um abaixo!</div>';
+        return;
+      }
+      candidates.forEach((c, i) => {
+        const item = document.createElement('div');
+        item.className = 'candidate-item';
+        item.innerHTML = `
+          <div class="c-num">${String(i + 1).padStart(2, '0')}</div>
+          <div class="c-thumb">
+            ${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="c-initial">${c.name.charAt(0)}</div>`}
+          </div>
+          <div class="c-info">
+            <div class="c-name">${c.name}</div>
+            ${c.subtitle ? `<div class="c-sub">${c.subtitle}</div>` : ''}
+          </div>
+          <span class="c-votes-badge" data-id="${c.id}">${(votes[c.id] || 0)} votos</span>
+          <div class="c-actions">
+            <button class="btn-icon" title="Editar" onclick="editCandidate(${i})">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="btn-icon danger" title="Remover" onclick="removeCandidate(${i})">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function renderResults(v) {
+      const area = document.getElementById('resultsArea');
+      if (candidates.length === 0) { area.innerHTML = '<div class="empty-list">Sem candidatos.</div>'; return; }
+      const total = Object.values(v).reduce((a, b) => a + b, 0);
+      const sorted = [...candidates].map(c => ({ ...c, count: v[c.id] || 0 })).sort((a, b) => b.count - a.count);
+      area.innerHTML = '';
+      sorted.forEach((c, i) => {
+        const pct = total ? (c.count / total * 100).toFixed(1) : 0;
+        const row = document.createElement('div');
+        row.className = 'result-row' + (i === 0 && c.count > 0 ? ' result-row--leader' : '');
+        row.innerHTML = `
+          <div class="result-rank">${i === 0 && c.count > 0 ? '🏆' : '#' + (i + 1)}</div>
+          <div class="result-thumb">
+            ${c.photo ? `<img src="${c.photo}"/>` : `<div class="c-initial" style="font-size:0.9rem">${c.name.charAt(0)}</div>`}
+          </div>
+          <div class="result-info">
+            <div class="result-name">${c.name}</div>
+            <div class="result-bar-wrap"><div class="result-bar" style="width:${pct}%"></div></div>
+          </div>
+          <div class="result-count">${c.count} <span>${pct}%</span></div>
+        `;
+        area.appendChild(row);
+      });
+    }
+
+    window.openAddCandidate = function () {
+      editingIndex = -1;
+      document.getElementById('candidateModalTitle').textContent = 'Adicionar Candidato';
+      document.getElementById('c_name').value = '';
+      document.getElementById('c_subtitle').value = '';
+      document.getElementById('c_description').value = '';
+      document.getElementById('c_photoB64').value = '';
       const preview = document.getElementById('c_photoPreview');
-      preview.src = b64; preview.style.display = 'block';
+      preview.style.display = 'none'; preview.src = '';
+      openModal('candidateModal');
     };
-    reader.readAsDataURL(file);
-  };
 
-  function openModal(id) { document.getElementById(id).classList.add('show'); }
-  window.closeModal = function(id) { document.getElementById(id).classList.remove('show'); };
+    window.editCandidate = function (i) {
+      editingIndex = i;
+      const c = candidates[i];
+      document.getElementById('candidateModalTitle').textContent = 'Editar Candidato';
+      document.getElementById('c_name').value = c.name || '';
+      document.getElementById('c_subtitle').value = c.subtitle || '';
+      document.getElementById('c_description').value = c.description || '';
+      document.getElementById('c_photoB64').value = c.photo || '';
+      const preview = document.getElementById('c_photoPreview');
+      if (c.photo) { preview.src = c.photo; preview.style.display = 'block'; }
+      else { preview.style.display = 'none'; preview.src = ''; }
+      openModal('candidateModal');
+    };
 
-  function showToast(msg) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 3500);
-  }
+    window.removeCandidate = async function (i) {
+      if (!confirm('Remover este candidato?')) return;
+      candidates.splice(i, 1);
+      await set(ref(db, 'config/candidates'), candidates);
+      showToast('✦ Candidato removido');
+    };
 
-  // ── SECTION NAV ──
-  window.showSection = function(name, el) {
-    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    document.getElementById('sec_' + name).classList.add('active');
-    if (el) el.classList.add('active');
-  };
-</script>
+    window.saveCandidate = async function () {
+      const name = document.getElementById('c_name').value.trim();
+      if (!name) { document.getElementById('c_name').focus(); return; }
+      const c = {
+        id: editingIndex >= 0 ? candidates[editingIndex].id : 'c_' + Date.now(),
+        name,
+        subtitle: document.getElementById('c_subtitle').value.trim(),
+        description: document.getElementById('c_description').value.trim(),
+        photo: document.getElementById('c_photoB64').value || '',
+      };
+      if (editingIndex >= 0) { candidates[editingIndex] = c; }
+      else { candidates.push(c); }
+      await set(ref(db, 'config/candidates'), candidates);
+      closeModal('candidateModal');
+      showToast('✦ Candidato guardado');
+    };
 
-<style>
-  :root {
-    --bg: #09090f;
-    --surface: #0e0e18;
-    --surface2: #131320;
-    --border: #1e1e30;
-    --accent: #c4973a;
-    --accent-dim: color-mix(in srgb, #c4973a 12%, transparent);
-    --text: #e8e4db;
-    --text-muted: #5a5666;
-    --danger: #e04444;
-    --success: #4fdb82;
-  }
+    window.handlePhotoUpload = function (input) {
+      const file = input.files[0]; if (!file) return;
+      if (file.size > 600000) { alert('Imagem demasiado grande. Máx. 500KB.'); return; }
+      const reader = new FileReader();
+      reader.onload = e => {
+        const b64 = e.target.result;
+        document.getElementById('c_photoB64').value = b64;
+        const preview = document.getElementById('c_photoPreview');
+        preview.src = b64; preview.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+    };
 
-  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font-family: 'Jost', sans-serif; font-size: 14px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+    function openModal(id) { document.getElementById(id).classList.add('show'); }
+    window.closeModal = function (id) { document.getElementById(id).classList.remove('show'); };
 
-  /* ── AUTH WALL ── */
-  #authWall {
-    position: fixed; inset: 0; z-index: 500;
-    background: var(--bg); display: flex; align-items: center; justify-content: center;
-    padding: 24px;
-  }
-  .auth-box {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 48px 44px;
-    width: 100%; max-width: 380px;
-    text-align: center;
-  }
-  .auth-logo {
-    font-family: 'Cinzel', serif;
-    font-size: 1.1rem; font-weight: 700;
-    letter-spacing: 0.15em; color: var(--accent);
-    margin-bottom: 10px;
-  }
-  .auth-box h2 { font-family: 'Cinzel', serif; font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; }
-  .auth-box p { font-size: 0.83rem; color: var(--text-muted); margin-bottom: 28px; }
-  #authError { color: var(--danger); font-size: 0.78rem; margin: -14px 0 16px; display: none; }
-  .auth-box input[type="password"] {
-    width: 100%; padding: 13px 16px;
-    background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 10px; color: var(--text); font-family: 'Jost', sans-serif; font-size: 0.9rem;
-    margin-bottom: 14px; outline: none; transition: border-color 0.2s;
-  }
-  .auth-box input:focus { border-color: var(--accent); }
-  @keyframes shake {
-    0%,100% { transform: translateX(0); }
-    20%,60% { transform: translateX(-8px); }
-    40%,80% { transform: translateX(8px); }
-  }
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3500);
+    }
 
-  /* ── LAYOUT ── */
-  #mainApp { display: none; }
-  .admin-layout { display: flex; min-height: 100vh; }
+    window.showSection = function (name, el) {
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.getElementById('sec_' + name).classList.add('active');
+      if (el) el.classList.add('active');
+    };
+  </script>
 
-  /* ── SIDEBAR ── */
-  .sidebar {
-    width: 230px; flex-shrink: 0;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
-    display: flex; flex-direction: column;
-    position: sticky; top: 0; height: 100vh; overflow-y: auto;
-  }
-  .sidebar-logo {
-    padding: 22px 20px 18px;
-    font-family: 'Cinzel', serif;
-    font-size: 0.75rem; font-weight: 700;
-    letter-spacing: 0.18em; text-transform: uppercase;
-    color: var(--accent);
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 8px;
-  }
-  .sidebar-logo span { display: block; font-family: 'Jost', sans-serif; font-size: 0.68rem; font-weight: 400; color: var(--text-muted); letter-spacing: 0.04em; text-transform: none; margin-top: 3px; }
+  <style>
+    :root {
+      --bg: #09090f;
+      --surface: #0e0e18;
+      --surface2: #131320;
+      --border: #1e1e30;
+      --accent: #c4973a;
+      --accent-dim: color-mix(in srgb, #c4973a 12%, transparent);
+      --text: #e8e4db;
+      --text-muted: #5a5666;
+      --danger: #e04444;
+      --success: #4fdb82;
+    }
 
-  .nav-section { padding: 10px 10px 4px; }
-  .nav-label { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-muted); padding: 4px 10px 8px; opacity: 0.7; }
-  .nav-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 12px; border-radius: 8px;
-    color: var(--text-muted); font-size: 0.82rem; font-weight: 400;
-    cursor: pointer; text-decoration: none;
-    transition: background 0.15s, color 0.15s;
-    margin-bottom: 2px;
-  }
-  .nav-item:hover { background: var(--surface2); color: var(--text); }
-  .nav-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 500; }
-  .nav-item .icon { font-size: 1rem; flex-shrink: 0; width: 18px; text-align: center; }
+    *,
+    *::before,
+    *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-  /* ── MAIN CONTENT ── */
-  .main-content { flex: 1; padding: 32px 36px; overflow-y: auto; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Jost', sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
 
-  .section { display: none; }
-  .section.active { display: block; animation: sectionIn 0.2s ease; }
-  @keyframes sectionIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    /* ── AUTH ── */
+    #authWall {
+      position: fixed;
+      inset: 0;
+      z-index: 500;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
 
-  .page-header { margin-bottom: 28px; border-bottom: 1px solid var(--border); padding-bottom: 20px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  .page-header h1 { font-family: 'Cinzel', serif; font-size: 1.4rem; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-  .page-header p { font-size: 0.8rem; color: var(--text-muted); }
+    .auth-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 48px 44px;
+      width: 100%;
+      max-width: 380px;
+      text-align: center;
+    }
 
-  /* ── CARDS ── */
-  .card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 22px 24px; margin-bottom: 18px;
-  }
-  .card-title { font-family: 'Cinzel', serif; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 18px; opacity: 0.85; }
+    .auth-logo {
+      font-family: 'Cinzel', serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
 
-  /* ── HERO CONTROL ── */
-  .vote-hero {
-    background: linear-gradient(135deg, var(--surface) 0%, color-mix(in srgb, var(--accent) 5%, var(--surface)) 100%);
-    border: 1px solid var(--border); border-radius: 14px;
-    padding: 28px; margin-bottom: 18px;
-    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;
-  }
-  .vote-hero-left { display: flex; align-items: center; gap: 16px; }
-  .hero-dot {
-    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
-    background: var(--text-muted);
-    transition: background 0.5s, box-shadow 0.5s;
-  }
-  .hero-dot.open { background: var(--success); box-shadow: 0 0 0 5px color-mix(in srgb, var(--success) 18%, transparent); animation: heroPulse 2.5s ease infinite; }
-  .hero-dot.closed { background: var(--danger); }
-  @keyframes heroPulse { 0%,100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 18%, transparent); } 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--success) 0%, transparent); } }
-  .vote-hero-info h2 { font-family: 'Cinzel', serif; font-size: 1.05rem; font-weight: 600; margin-bottom: 4px; }
-  .vote-hero-info p { font-size: 0.78rem; color: var(--text-muted); }
-  .vote-hero-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .auth-box h2 {
+      font-family: 'Cinzel', serif;
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
 
-  /* Toggle */
-  .toggle-wrap { display: flex; align-items: center; gap: 10px; }
-  .toggle { position: relative; width: 52px; height: 28px; cursor: pointer; }
-  .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-  .toggle-track {
-    position: absolute; inset: 0; border-radius: 100px;
-    background: var(--surface2); border: 1px solid var(--border);
-    transition: background 0.25s, border-color 0.25s;
-  }
-  .toggle input:checked ~ .toggle-track { background: var(--accent); border-color: var(--accent); }
-  .toggle-thumb {
-    position: absolute; top: 4px; left: 4px;
-    width: 20px; height: 20px; border-radius: 50%;
-    background: white; transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
-    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-  }
-  .toggle input:checked ~ .toggle-thumb { transform: translateX(24px); }
-  #toggleLabel { font-size: 0.82rem; font-weight: 500; }
+    .auth-box p {
+      font-size: 0.83rem;
+      color: var(--text-muted);
+      margin-bottom: 28px;
+    }
 
-  .status-badge {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.68rem; font-weight: 500;
-    letter-spacing: 0.1em; padding: 4px 12px;
-    border-radius: 100px;
-  }
-  .status-badge.open { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 30%, transparent); }
-  .status-badge.closed { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); }
+    #authError {
+      color: var(--danger);
+      font-size: 0.78rem;
+      margin: -14px 0 16px;
+      display: none;
+    }
 
-  /* ── SESSION BOX ── */
-  .session-box {
-    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
-    background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
-    padding: 16px 20px;
-  }
-  .session-info { flex: 1; min-width: 0; }
-  .session-info label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 5px; }
-  #sessionIdDisplay {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.76rem; color: var(--accent);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    max-width: 320px; display: block;
-  }
-  .session-sub { font-size: 0.72rem; color: var(--text-muted); margin-top: 3px; }
+    .auth-box input[type="password"] {
+      width: 100%;
+      padding: 13px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-family: 'Jost', sans-serif;
+      font-size: 0.9rem;
+      margin-bottom: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
 
-  /* ── STATS ── */
-  .stats-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
-  .stat-box {
-    background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
-    padding: 16px 20px; flex: 1; min-width: 110px;
-  }
-  .stat-value { font-family: 'JetBrains Mono', monospace; font-size: 1.9rem; color: var(--accent); font-weight: 500; }
-  .stat-label { font-size: 0.68rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-top: 4px; }
+    .auth-box input:focus {
+      border-color: var(--accent);
+    }
 
-  /* ── BUTTONS ── */
-  .btn {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 10px 18px; border-radius: 8px; border: none;
-    font-family: 'Jost', sans-serif; font-size: 0.82rem; font-weight: 500;
-    cursor: pointer; letter-spacing: 0.03em;
-    transition: opacity 0.18s, transform 0.15s, box-shadow 0.18s;
-  }
-  .btn:active { transform: scale(0.97); }
-  .btn-primary { background: var(--accent); color: #000; }
-  .btn-primary:hover { opacity: 0.9; box-shadow: 0 6px 20px -4px color-mix(in srgb, var(--accent) 40%, transparent); }
-  .btn-secondary { background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted); }
-  .btn-secondary:hover { color: var(--text); }
-  .btn-danger { background: color-mix(in srgb, var(--danger) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); color: var(--danger); }
-  .btn-danger:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); }
-  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
-  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+    @keyframes shake {
 
-  /* ── FORMS ── */
-  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-  .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-  label { font-size: 0.72rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
-  input[type="text"], input[type="password"], textarea, select {
-    background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 8px; color: var(--text);
-    padding: 10px 14px; font-family: 'Jost', sans-serif; font-size: 0.88rem;
-    outline: none; transition: border-color 0.2s, box-shadow 0.2s;
-    width: 100%;
-  }
-  input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
-  textarea { resize: vertical; min-height: 90px; }
+      0%,
+      100% {
+        transform: translateX(0);
+      }
 
-  .color-input-wrap { display: flex; gap: 8px; align-items: center; }
-  .color-input-wrap input[type="color"] { width: 38px; height: 38px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); cursor: pointer; padding: 2px; }
-  .color-input-wrap input[type="text"] { flex: 1; }
+      20%,
+      60% {
+        transform: translateX(-8px);
+      }
 
-  /* ── THEME GRID ── */
-  .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 18px; }
-  .preset-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0; }
-  .preset-btn {
-    padding: 8px 16px; border-radius: 8px;
-    background: var(--surface2); border: 1px solid var(--border);
-    color: var(--text-muted); font-family: 'Jost', sans-serif;
-    font-size: 0.78rem; font-weight: 500; cursor: pointer; transition: all 0.15s;
-  }
-  .preset-btn:hover { border-color: var(--accent); color: var(--text); }
-  .preset-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+      40%,
+      80% {
+        transform: translateX(8px);
+      }
+    }
 
-  /* ── CANDIDATES ── */
-  .candidates-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  .candidates-toolbar p { color: var(--text-muted); font-size: 0.8rem; }
-  #candidateList { display: flex; flex-direction: column; gap: 8px; }
-  .empty-list { text-align: center; color: var(--text-muted); padding: 48px; font-size: 0.85rem; }
+    /* ── LAYOUT ── */
+    #mainApp {
+      display: none;
+    }
 
-  .candidate-item {
-    display: flex; align-items: center; gap: 12px;
-    background: var(--surface2); border: 1px solid var(--border);
-    border-radius: 10px; padding: 12px 14px;
-    transition: border-color 0.15s;
-  }
-  .candidate-item:hover { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
-  .c-num { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-muted); width: 24px; text-align: center; }
-  .c-thumb { width: 42px; height: 42px; border-radius: 8px; overflow: hidden; flex-shrink: 0; background: var(--surface); }
-  .c-thumb img { width: 100%; height: 100%; object-fit: cover; }
-  .c-initial { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-family: 'Cinzel', serif; font-weight: 700; color: var(--accent); }
-  .c-info { flex: 1; min-width: 0; }
-  .c-name { font-weight: 500; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .c-sub { color: var(--text-muted); font-size: 0.74rem; margin-top: 2px; }
-  .c-votes-badge { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--accent); background: var(--accent-dim); border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); padding: 3px 9px; border-radius: 5px; white-space: nowrap; }
-  .c-actions { display: flex; gap: 5px; }
-  .btn-icon { background: none; border: 1px solid var(--border); border-radius: 7px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-muted); transition: all 0.15s; }
-  .btn-icon:hover { background: var(--surface); border-color: var(--accent); color: var(--accent); }
-  .btn-icon.danger:hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
+    .admin-layout {
+      display: flex;
+      min-height: 100vh;
+    }
 
-  /* ── RESULTS ── */
-  #resultsArea { display: flex; flex-direction: column; gap: 8px; }
-  .result-row { display: flex; align-items: center; gap: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; transition: border-color 0.2s; }
-  .result-row--leader { border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 4%, var(--surface2)); }
-  .result-rank { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: var(--text-muted); width: 28px; text-align: center; flex-shrink: 0; }
-  .result-thumb { width: 40px; height: 40px; border-radius: 7px; overflow: hidden; flex-shrink: 0; background: var(--surface); }
-  .result-thumb img { width: 100%; height: 100%; object-fit: cover; }
-  .result-info { flex: 1; min-width: 0; }
-  .result-name { font-weight: 500; font-size: 0.88rem; margin-bottom: 7px; }
-  .result-bar-wrap { height: 4px; background: var(--border); border-radius: 4px; }
-  .result-bar { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.6s cubic-bezier(0.22,1,0.36,1); min-width: 2px; }
-  .result-count { font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; white-space: nowrap; }
-  .result-count span { color: var(--text-muted); font-size: 0.72rem; margin-left: 4px; }
+    /* ── SIDEBAR ── */
+    .sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
 
-  /* ── MODAL ── */
-  .modal-overlay { display: none; position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); align-items: center; justify-content: center; padding: 20px; }
-  .modal-overlay.show { display: flex; }
-  .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 32px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; animation: modalIn 0.22s ease; }
-  @keyframes modalIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
-  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-  .modal-header h3 { font-family: 'Cinzel', serif; font-size: 1rem; font-weight: 600; }
-  .modal-close { background: none; border: none; color: var(--text-muted); font-size: 1.3rem; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: color 0.15s; }
-  .modal-close:hover { color: var(--text); }
-  .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+    .sidebar-logo {
+      padding: 22px 20px 18px;
+      font-family: 'Cinzel', serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
 
-  .photo-upload-area { border: 2px dashed var(--border); border-radius: 10px; padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.2s; margin-bottom: 14px; }
-  .photo-upload-area:hover { border-color: var(--accent); }
-  .photo-upload-area input { display: none; }
-  #c_photoPreview { width: 80px; height: 80px; border-radius: 10px; object-fit: cover; margin: 10px auto 0; display: none; border: 1px solid var(--border); }
-  .upload-hint { color: var(--text-muted); font-size: 0.8rem; margin-top: 8px; line-height: 1.5; }
-  .upload-hint strong { color: var(--accent); }
+    .sidebar-logo span {
+      display: block;
+      font-family: 'Jost', sans-serif;
+      font-size: 0.68rem;
+      font-weight: 400;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      text-transform: none;
+      margin-top: 3px;
+    }
 
-  /* ── TOAST ── */
-  .toast {
-    position: fixed; bottom: 24px; right: 24px;
-    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);
-    padding: 12px 22px; border-radius: 10px; font-size: 0.87rem;
-    z-index: 500; transform: translateX(130%);
-    transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1);
-    box-shadow: 0 10px 32px rgba(0,0,0,0.4); color: var(--accent);
-  }
-  .toast.show { transform: translateX(0); }
+    .nav-section {
+      padding: 10px 10px 4px;
+    }
 
-  /* ── SECTION ID INPUT (readonly) ── */
-  input[readonly] { color: var(--text-muted); cursor: default; }
+    .nav-label {
+      font-size: 0.6rem;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding: 4px 10px 8px;
+      opacity: 0.7;
+    }
 
-  /* ── RESPONSIVE ── */
-  @media (max-width: 720px) {
-    .sidebar { display: none; }
-    .main-content { padding: 20px; }
-    .form-row { grid-template-columns: 1fr; }
-  }
-</style>
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 400;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+      margin-bottom: 2px;
+    }
+
+    .nav-item:hover {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    .nav-item.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .nav-item .icon {
+      font-size: 1rem;
+      flex-shrink: 0;
+      width: 18px;
+      text-align: center;
+    }
+
+    /* ── MAIN CONTENT ── */
+    .main-content {
+      flex: 1;
+      padding: 32px 36px;
+      overflow-y: auto;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+      animation: sectionIn 0.22s ease;
+    }
+
+    @keyframes sectionIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    .page-header {
+      margin-bottom: 28px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .page-header h1 {
+      font-family: 'Cinzel', serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .page-header p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    /* ── CARDS ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 22px 24px;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-family: 'Cinzel', serif;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 18px;
+      opacity: 0.85;
+    }
+
+    /* ── VOTE HERO ── */
+    .vote-hero {
+      background: linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--accent) 5%, var(--surface)));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+
+    .vote-hero-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .hero-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-muted);
+      transition: background 0.5s, box-shadow 0.5s;
+    }
+
+    .hero-dot.open {
+      background: var(--success);
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--success) 18%, transparent);
+      animation: heroPulse 2.5s ease infinite;
+    }
+
+    .hero-dot.closed {
+      background: var(--danger);
+    }
+
+    @keyframes heroPulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 18%, transparent);
+      }
+
+      50% {
+        box-shadow: 0 0 0 9px color-mix(in srgb, var(--success) 0%, transparent);
+      }
+    }
+
+    .vote-hero-info h2 {
+      font-family: 'Cinzel', serif;
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .vote-hero-info p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .vote-hero-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    /* Toggle */
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toggle {
+      position: relative;
+      width: 52px;
+      height: 28px;
+      cursor: pointer;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      border-radius: 100px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      transition: background 0.25s, border-color 0.25s;
+    }
+
+    .toggle input:checked~.toggle-track {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: white;
+      transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    }
+
+    .toggle input:checked~.toggle-thumb {
+      transform: translateX(24px);
+    }
+
+    #toggleLabel {
+      font-size: 0.82rem;
+      font-weight: 500;
+    }
+
+    .status-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      padding: 4px 12px;
+      border-radius: 100px;
+    }
+
+    .status-badge.open {
+      background: color-mix(in srgb, var(--success) 15%, transparent);
+      color: var(--success);
+      border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+    }
+
+    .status-badge.closed {
+      background: color-mix(in srgb, var(--danger) 12%, transparent);
+      color: var(--danger);
+      border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+    }
+
+    /* Session */
+    .session-box {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+
+    .session-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .session-info label {
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    #sessionIdDisplay {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.76rem;
+      color: var(--accent);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 320px;
+      display: block;
+    }
+
+    .session-sub {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    /* Stats */
+    .stats-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+
+    .stat-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      flex: 1;
+      min-width: 110px;
+    }
+
+    .stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.9rem;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .stat-label {
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: none;
+      font-family: 'Jost', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      letter-spacing: 0.03em;
+      transition: opacity 0.18s, transform 0.15s, box-shadow 0.18s;
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.9;
+      box-shadow: 0 6px 20px -4px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+
+    .btn-secondary {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .btn-secondary:hover {
+      color: var(--text);
+    }
+
+    .btn-danger {
+      background: color-mix(in srgb, var(--danger) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+      color: var(--danger);
+    }
+
+    .btn-danger:hover {
+      background: color-mix(in srgb, var(--danger) 18%, transparent);
+    }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .btn-outline:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Forms */
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    label {
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    input[type="text"],
+    input[type="password"],
+    textarea,
+    select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-family: 'Jost', sans-serif;
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      width: 100%;
+    }
+
+    input:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 90px;
+    }
+
+    /* Color inputs */
+    .color-input-wrap {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .color-input-wrap input[type="color"] {
+      width: 42px;
+      height: 40px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface2);
+      cursor: pointer;
+      padding: 2px;
+      flex-shrink: 0;
+    }
+
+    .color-input-wrap input[type="text"] {
+      flex: 1;
+    }
+
+    /* ── TEMPLATES ── */
+    .template-search-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .template-search-bar input {
+      flex: 1;
+      min-width: 180px;
+      padding: 10px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: 'Jost', sans-serif;
+      font-size: 0.84rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .template-search-bar input:focus {
+      border-color: var(--accent);
+    }
+
+    .template-count {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    #templateCats {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    .cat-tab {
+      padding: 6px 14px;
+      border-radius: 100px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: 'Jost', sans-serif;
+      font-size: 0.74rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .cat-tab:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .cat-tab.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    #templateGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+    }
+
+    .no-results {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 40px;
+      font-size: 0.85rem;
+      grid-column: 1 / -1;
+    }
+
+    .template-card {
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.18s, box-shadow 0.2s;
+      background: var(--surface2);
+    }
+
+    .template-card:hover {
+      border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.5);
+    }
+
+    .template-card.selected {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+    }
+
+    .tc-preview {
+      background: var(--tc-bg, #07060e);
+      padding: 16px 14px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: relative;
+      border-bottom: 1px solid color-mix(in srgb, var(--tc-accent, #c4973a) 18%, transparent);
+    }
+
+    .tc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--tc-accent, #c4973a);
+      flex-shrink: 0;
+      box-shadow: 0 0 8px var(--tc-accent, #c4973a);
+    }
+
+    .tc-lines {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .tc-line {
+      border-radius: 3px;
+      background: var(--tc-accent, #c4973a);
+      opacity: 0.45;
+    }
+
+    .tc-line--title {
+      height: 5px;
+      width: 70%;
+      opacity: 0.65;
+    }
+
+    .tc-line--sub {
+      height: 3px;
+      width: 45%;
+    }
+
+    .tc-swatch {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      background: color-mix(in srgb, var(--tc-accent, #c4973a) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--tc-accent, #c4973a) 22%, transparent);
+      flex-shrink: 0;
+    }
+
+    .tc-info {
+      padding: 10px 12px 12px;
+    }
+
+    .tc-name {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+
+    .tc-cat {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── THEME SECTION ── */
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    /* Live preview */
+    .theme-preview-wrap {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .theme-preview-label {
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+
+    #themePreview {
+      --pa: #c4973a;
+      --pa2: #e8d5a3;
+      --pt: #ede9e0;
+      --pcb: #100f1e;
+      border-radius: 10px;
+      padding: 20px 24px;
+      position: relative;
+      overflow: hidden;
+      transition: background 0.3s;
+    }
+
+    #themePreview::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--pa) 40%, var(--pa2) 60%, transparent);
+    }
+
+    .tp-title {
+      font-family: 'Cinzel', serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--pt);
+      margin-bottom: 6px;
+      text-shadow: 0 0 30px color-mix(in srgb, var(--pa) 30%, transparent);
+    }
+
+    .tp-sub {
+      font-size: 0.78rem;
+      font-style: italic;
+      color: var(--pa);
+      margin-bottom: 16px;
+    }
+
+    .tp-cards {
+      display: flex;
+      gap: 10px;
+    }
+
+    .tp-card {
+      background: var(--pcb);
+      border: 1px solid color-mix(in srgb, var(--pa) 25%, transparent);
+      border-radius: 8px;
+      padding: 12px 14px;
+      flex: 1;
+    }
+
+    .tp-card-name {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--pt);
+      margin-bottom: 6px;
+    }
+
+    .tp-card-btn {
+      display: inline-block;
+      padding: 5px 12px;
+      background: transparent;
+      border: 1px solid color-mix(in srgb, var(--pa) 40%, transparent);
+      border-radius: 5px;
+      font-size: 0.68rem;
+      color: var(--pa);
+      cursor: pointer;
+    }
+
+    /* ── CANDIDATES ── */
+    .candidates-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .candidates-toolbar p {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    #candidateList {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .empty-list {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 48px;
+      font-size: 0.85rem;
+    }
+
+    .candidate-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      transition: border-color 0.15s;
+    }
+
+    .candidate-item:hover {
+      border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+
+    .c-num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      width: 24px;
+      text-align: center;
+    }
+
+    .c-thumb {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: var(--surface);
+    }
+
+    .c-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .c-initial {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Cinzel', serif;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .c-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .c-name {
+      font-weight: 500;
+      font-size: 0.9rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .c-sub {
+      color: var(--text-muted);
+      font-size: 0.74rem;
+      margin-top: 2px;
+    }
+
+    .c-votes-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+      padding: 3px 9px;
+      border-radius: 5px;
+      white-space: nowrap;
+    }
+
+    .c-actions {
+      display: flex;
+      gap: 5px;
+    }
+
+    .btn-icon {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+
+    .btn-icon:hover {
+      background: var(--surface);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn-icon.danger:hover {
+      border-color: var(--danger);
+      background: color-mix(in srgb, var(--danger) 10%, transparent);
+      color: var(--danger);
+    }
+
+    /* Results */
+    #resultsArea {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .result-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .result-row--leader {
+      border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+      background: color-mix(in srgb, var(--accent) 4%, var(--surface2));
+    }
+
+    .result-rank {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      width: 28px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .result-thumb {
+      width: 40px;
+      height: 40px;
+      border-radius: 7px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: var(--surface);
+    }
+
+    .result-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .result-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .result-name {
+      font-weight: 500;
+      font-size: 0.88rem;
+      margin-bottom: 7px;
+    }
+
+    .result-bar-wrap {
+      height: 4px;
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    .result-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+      min-width: 2px;
+    }
+
+    .result-count {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.88rem;
+      white-space: nowrap;
+    }
+
+    .result-count span {
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      margin-left: 4px;
+    }
+
+    /* ── MODAL ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-overlay.show {
+      display: flex;
+    }
+
+    .modal-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      width: 100%;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
+      animation: modalIn 0.22s ease;
+    }
+
+    @keyframes modalIn {
+      from {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .modal-header h3 {
+      font-family: 'Cinzel', serif;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.3rem;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .modal-close:hover {
+      color: var(--text);
+    }
+
+    .modal-footer {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 24px;
+    }
+
+    .photo-upload-area {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      margin-bottom: 14px;
+    }
+
+    .photo-upload-area:hover {
+      border-color: var(--accent);
+    }
+
+    .photo-upload-area input {
+      display: none;
+    }
+
+    #c_photoPreview {
+      width: 80px;
+      height: 80px;
+      border-radius: 10px;
+      object-fit: cover;
+      margin: 10px auto 0;
+      display: none;
+      border: 1px solid var(--border);
+    }
+
+    .upload-hint {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+
+    .upload-hint strong {
+      color: var(--accent);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      padding: 12px 22px;
+      border-radius: 10px;
+      font-size: 0.87rem;
+      z-index: 500;
+      transform: translateX(130%);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+      color: var(--accent);
+    }
+
+    .toast.show {
+      transform: translateX(0);
+    }
+
+    input[readonly] {
+      color: var(--text-muted);
+      cursor: default;
+    }
+
+    @media (max-width: 720px) {
+      .sidebar {
+        display: none;
+      }
+
+      .main-content {
+        padding: 20px;
+      }
+
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+
+      #templateGrid {
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      }
+    }
+  </style>
 </head>
+
 <body>
 
-<!-- AUTH WALL -->
-<div id="authWall" style="display:none">
-  <div class="auth-box">
-    <div class="auth-logo">GRUPO ARMINDO</div>
-    <h2>Admin Panel</h2>
-    <p>Introduz a password para aceder ao painel de controlo.</p>
-    <p id="authError">Password incorreta.</p>
-    <input type="password" id="passInput" placeholder="••••••••" autocomplete="current-password"/>
-    <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">Entrar</button>
+  <!-- AUTH WALL -->
+  <div id="authWall" style="display:none">
+    <div class="auth-box">
+      <div class="auth-logo">GRUPO ARMINDO</div>
+      <h2>Admin Panel</h2>
+      <p>Introduz a password para aceder ao painel de controlo.</p>
+      <p id="authError">Password incorreta.</p>
+      <input type="password" id="passInput" placeholder="••••••••" autocomplete="current-password" />
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">Entrar</button>
+    </div>
   </div>
-</div>
 
-<!-- MAIN APP -->
-<div id="mainApp">
-  <div class="admin-layout">
+  <!-- MAIN APP -->
+  <div id="mainApp">
+    <div class="admin-layout">
 
-    <!-- SIDEBAR -->
-    <aside class="sidebar">
-      <div class="sidebar-logo">
-        VOTE ADMIN
-        <span>Grupo Armindo</span>
-      </div>
-      <div class="nav-section">
-        <div class="nav-label">Controlo</div>
-        <a class="nav-item active" onclick="showSection('control',this)">
-          <span class="icon">⚡</span> Votação
-        </a>
-        <a class="nav-item" onclick="showSection('results',this)">
-          <span class="icon">📊</span> Resultados
-        </a>
-      </div>
-      <div class="nav-section">
-        <div class="nav-label">Configuração</div>
-        <a class="nav-item" onclick="showSection('event',this)">
-          <span class="icon">📝</span> Evento
-        </a>
-        <a class="nav-item" onclick="showSection('candidates',this)">
-          <span class="icon">👥</span> Candidatos
-        </a>
-        <a class="nav-item" onclick="showSection('theme',this)">
-          <span class="icon">🎨</span> Tema
-        </a>
-      </div>
-      <div class="nav-section">
-        <div class="nav-label">Links</div>
-        <a class="nav-item" href="index.html" target="_blank">
-          <span class="icon">🗳</span> Página de Voto
-        </a>
-        <a class="nav-item" href="obs.html" target="_blank">
-          <span class="icon">📺</span> Display OBS
-        </a>
-      </div>
-    </aside>
-
-    <!-- CONTENT -->
-    <main class="main-content">
-
-      <!-- SECTION: CONTROL -->
-      <div id="sec_control" class="section active">
-        <div class="page-header">
-          <div>
-            <h1>Controlo da Votação</h1>
-            <p>Abre, fecha e gere sessões de votação em tempo real</p>
-          </div>
+      <!-- SIDEBAR -->
+      <aside class="sidebar">
+        <div class="sidebar-logo">VOTE ADMIN<span>Grupo Armindo</span></div>
+        <div class="nav-section">
+          <div class="nav-label">Controlo</div>
+          <a class="nav-item active" onclick="showSection('control',this)"><span class="icon">⚡</span> Votação</a>
+          <a class="nav-item" onclick="showSection('results',this)"><span class="icon">📊</span> Resultados</a>
         </div>
-
-        <!-- HERO STATUS -->
-        <div class="vote-hero">
-          <div class="vote-hero-left">
-            <div class="hero-dot" id="heroStatusDot"></div>
-            <div class="vote-hero-info">
-              <h2>Estado da Votação</h2>
-              <p>Actualiza instantaneamente para todos os utilizadores</p>
-            </div>
-          </div>
-          <div class="vote-hero-right">
-            <span class="status-badge closed" id="votingBadge">FECHADA</span>
-            <div class="toggle-wrap">
-              <label class="toggle">
-                <input type="checkbox" id="votingToggle" onchange="toggleVoting()"/>
-                <div class="toggle-track"></div>
-                <div class="toggle-thumb"></div>
-              </label>
-              <span id="toggleLabel">Abrir Votação</span>
-            </div>
-          </div>
+        <div class="nav-section">
+          <div class="nav-label">Configuração</div>
+          <a class="nav-item" onclick="showSection('event',this)"><span class="icon">📝</span> Evento</a>
+          <a class="nav-item" onclick="showSection('candidates',this)"><span class="icon">👥</span> Candidatos</a>
+          <a class="nav-item" onclick="showSection('templates',this)"><span class="icon">🎨</span> Templates <span
+              style="font-size:0.62rem;background:var(--accent-dim);color:var(--accent);padding:2px 7px;border-radius:100px;margin-left:4px;border:1px solid color-mix(in srgb,var(--accent) 20%,transparent)">200</span></a>
+          <a class="nav-item" onclick="showSection('theme',this)"><span class="icon">🖌️</span> Tema Manual</a>
         </div>
+      </aside>
 
-        <!-- SESSION MANAGEMENT -->
-        <div class="card">
-          <div class="card-title">Sessão de Votação</div>
-          <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6">
-            Cada sessão tem um ID único. Quando crias uma nova sessão, <strong style="color:var(--text)">todos os utilizadores podem votar novamente</strong>, independentemente de terem votado antes. Usa isto para iniciar uma nova ronda de votação.
-          </p>
-          <div class="session-box">
-            <div class="session-info">
-              <label>ID da Sessão Actual</label>
-              <span id="sessionIdDisplay">—</span>
-              <span class="session-sub">O voto de cada utilizador está ligado a este ID</span>
+      <!-- MAIN -->
+      <main class="main-content">
+
+        <!-- ── VOTAÇÃO ── -->
+        <div id="sec_control" class="section active">
+          <div class="page-header">
+            <div>
+              <h1>Controlo de Votação</h1>
+              <p>Liga/desliga a votação em tempo real</p>
             </div>
-            <button class="btn btn-primary" onclick="newSession()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-              Nova Sessão
+          </div>
+          <div class="vote-hero">
+            <div class="vote-hero-left">
+              <div class="hero-dot closed" id="heroStatusDot"></div>
+              <div class="vote-hero-info">
+                <h2>Estado da Votação</h2>
+                <p>Actualiza instantaneamente para todos os utilizadores</p>
+              </div>
+            </div>
+            <div class="vote-hero-right">
+              <span class="status-badge closed" id="votingBadge">FECHADA</span>
+              <div class="toggle-wrap">
+                <label class="toggle">
+                  <input type="checkbox" id="votingToggle" onchange="toggleVoting()" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+                <span id="toggleLabel">Abrir Votação</span>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Sessão de Votação</div>
+            <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6">Cada sessão tem um
+              ID único. Quando crias uma nova sessão, <strong style="color:var(--text)">todos os utilizadores podem
+                votar novamente</strong>.</p>
+            <div class="session-box">
+              <div class="session-info">
+                <label>ID da Sessão Actual</label>
+                <span id="sessionIdDisplay">—</span>
+                <span class="session-sub">O voto de cada utilizador está ligado a este ID</span>
+              </div>
+              <button class="btn btn-primary" onclick="newSession()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round">
+                  <polyline points="23 4 23 10 17 10" />
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+                Nova Sessão
+              </button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Votos</div>
+            <div class="stats-row">
+              <div class="stat-box">
+                <div class="stat-value" id="totalVotes">0</div>
+                <div class="stat-label">Total de Votos</div>
+              </div>
+            </div>
+            <button class="btn btn-danger" onclick="resetVotes()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              </svg>
+              Apagar Votos da Sessão
             </button>
           </div>
         </div>
 
-        <!-- VOTES / DANGER -->
-        <div class="card">
-          <div class="card-title">Votos</div>
-          <div class="stats-row">
-            <div class="stat-box">
-              <div class="stat-value" id="totalVotes">0</div>
-              <div class="stat-label">Total de Votos</div>
+        <!-- ── RESULTADOS ── -->
+        <div id="sec_results" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Resultados</h1>
+              <p>Actualizado em tempo real</p>
             </div>
           </div>
-          <button class="btn btn-danger" onclick="resetVotes()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            Apagar Votos da Sessão
-          </button>
+          <div class="card">
+            <div class="card-title">Rankings da Sessão Actual</div>
+            <div id="resultsArea">
+              <div class="empty-list">A carregar...</div>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <!-- SECTION: RESULTS -->
-      <div id="sec_results" class="section">
-        <div class="page-header">
-          <div><h1>Resultados</h1><p>Actualizado em tempo real</p></div>
+        <!-- ── EVENTO ── -->
+        <div id="sec_event" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Informação do Evento</h1>
+              <p>Título, subtítulo e descrição exibidos na página de voto</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Detalhes</div>
+            <div class="form-group"><label>Título do Evento</label><input type="text" id="f_title"
+                placeholder="ex: Festival da Canção 2025" /></div>
+            <div class="form-group"><label>Subtítulo</label><input type="text" id="f_subtitle"
+                placeholder="ex: Vota no teu favorito!" /></div>
+            <div class="form-group"><label>Descrição (opcional)</label><textarea id="f_description"
+                placeholder="Texto adicional para o público..."></textarea></div>
+            <div class="form-group"><label>ID da Sessão (só leitura)</label><input type="text" id="f_sessionId" readonly
+                placeholder="Gera uma sessão no separador Votação" /></div>
+            <button class="btn btn-primary" onclick="saveEventInfo()">Guardar</button>
+          </div>
         </div>
-        <div class="card">
-          <div class="card-title">Rankings da Sessão Actual</div>
-          <div id="resultsArea"><div class="empty-list">A carregar...</div></div>
-        </div>
-      </div>
 
-      <!-- SECTION: EVENT INFO -->
-      <div id="sec_event" class="section">
-        <div class="page-header">
-          <div><h1>Informação do Evento</h1><p>Título, subtítulo e descrição exibidos na página de voto</p></div>
+        <!-- ── CANDIDATOS ── -->
+        <div id="sec_candidates" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Candidatos</h1>
+              <p>Gere os candidatos da votação actual</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="candidates-toolbar">
+              <p id="candidateCount">0 candidatos</p>
+              <button class="btn btn-primary" onclick="openAddCandidate()">+ Adicionar</button>
+            </div>
+            <div id="candidateList"></div>
+          </div>
         </div>
-        <div class="card">
-          <div class="card-title">Detalhes</div>
-          <div class="form-group">
-            <label>Título do Evento</label>
-            <input type="text" id="f_title" placeholder="ex: Festival da Canção 2025"/>
-          </div>
-          <div class="form-group">
-            <label>Subtítulo</label>
-            <input type="text" id="f_subtitle" placeholder="ex: Vota no teu favorito!"/>
-          </div>
-          <div class="form-group">
-            <label>Descrição (opcional)</label>
-            <textarea id="f_description" placeholder="Texto adicional para o público..."></textarea>
-          </div>
-          <div class="form-group">
-            <label>ID da Sessão (só leitura)</label>
-            <input type="text" id="f_sessionId" readonly placeholder="Gera uma sessão no separador Votação"/>
-          </div>
-          <button class="btn btn-primary" onclick="saveEventInfo()">Guardar</button>
-        </div>
-      </div>
 
-      <!-- SECTION: CANDIDATES -->
-      <div id="sec_candidates" class="section">
-        <div class="page-header">
-          <div><h1>Candidatos</h1><p>Gere os candidatos da votação actual</p></div>
-        </div>
-        <div class="card">
-          <div class="candidates-toolbar">
-            <p id="candidateCount">0 candidatos</p>
-            <button class="btn btn-primary" onclick="openAddCandidate()">+ Adicionar</button>
+        <!-- ── TEMPLATES ── -->
+        <div id="sec_templates" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Templates</h1>
+              <p>200 templates prontos para todo o tipo de eventos</p>
+            </div>
           </div>
-          <div id="candidateList"></div>
+          <div class="card">
+            <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:18px;line-height:1.65">
+              Clica num template para pré-carregar as cores e informações. Depois vai a <strong
+                style="color:var(--text)">Tema Manual</strong> para ajustar e guardar, ou vai a <strong
+                style="color:var(--text)">Evento</strong> para personalizar os textos.
+            </p>
+            <div class="template-search-bar">
+              <input type="text" id="templateSearch"
+                placeholder="🔍  Pesquisar templates… (ex: Eurovision, Futebol, Natal)"
+                oninput="searchTemplates(this.value)" />
+              <span class="template-count">200 templates</span>
+            </div>
+            <div id="templateCats"></div>
+            <div id="templateGrid"></div>
+          </div>
         </div>
-      </div>
 
-      <!-- SECTION: THEME -->
-      <div id="sec_theme" class="section">
-        <div class="page-header">
-          <div><h1>Tema Visual</h1><p>Personaliza a aparência da página de voto</p></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Presets Rápidos</div>
-          <div class="preset-row">
-            <button class="preset-btn" data-preset="classico" onclick="applyPreset('classico')">✦ Clássico</button>
-            <button class="preset-btn" data-preset="eurovisao" onclick="applyPreset('eurovisao')">🎤 Eurovisão</button>
-            <button class="preset-btn" data-preset="oscares" onclick="applyPreset('oscares')">🏆 Óscares</button>
-            <button class="preset-btn" data-preset="festival" onclick="applyPreset('festival')">🎶 Festival</button>
-            <button class="preset-btn" data-preset="elegante" onclick="applyPreset('elegante')">☀️ Claro</button>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-title">Cores</div>
-          <div class="theme-grid">
-            <div class="form-group">
-              <label>Fundo Principal</label>
-              <div class="color-input-wrap">
-                <input type="color" oninput="document.getElementById('t_bg').value=this.value"/>
-                <input type="text" id="t_bg" placeholder="#06050f"/>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Superfície</label>
-              <div class="color-input-wrap">
-                <input type="color" oninput="document.getElementById('t_surface').value=this.value"/>
-                <input type="text" id="t_surface" placeholder="#0d0c1a"/>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Cor de Destaque</label>
-              <div class="color-input-wrap">
-                <input type="color" oninput="document.getElementById('t_accent').value=this.value"/>
-                <input type="text" id="t_accent" placeholder="#c4973a"/>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Destaque 2</label>
-              <div class="color-input-wrap">
-                <input type="color" oninput="document.getElementById('t_accent2').value=this.value"/>
-                <input type="text" id="t_accent2" placeholder="#e8d5a3"/>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Texto</label>
-              <div class="color-input-wrap">
-                <input type="color" oninput="document.getElementById('t_text').value=this.value"/>
-                <input type="text" id="t_text" placeholder="#ede9e0"/>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Fundo Cartão</label>
-              <div class="color-input-wrap">
-                <input type="color" oninput="document.getElementById('t_cardBg').value=this.value"/>
-                <input type="text" id="t_cardBg" placeholder="#100f1e"/>
-              </div>
+        <!-- ── TEMA MANUAL ── -->
+        <div id="sec_theme" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Tema Manual</h1>
+              <p>Personaliza cada cor individualmente</p>
             </div>
           </div>
-          <button class="btn btn-primary" onclick="saveTheme()">Aplicar Tema</button>
-        </div>
-      </div>
 
-    </main>
+          <!-- Live preview -->
+          <div class="theme-preview-wrap">
+            <div class="theme-preview-label">Pré-visualização ao vivo</div>
+            <div id="themePreview">
+              <div class="tp-title" id="tp_title_el">Título do Evento</div>
+              <div class="tp-sub" id="tp_sub_el">Subtítulo do evento</div>
+              <div class="tp-cards">
+                <div class="tp-card">
+                  <div class="tp-card-name">Candidato A</div>
+                  <div class="tp-card-btn">Votar</div>
+                </div>
+                <div class="tp-card">
+                  <div class="tp-card-name">Candidato B</div>
+                  <div class="tp-card-btn">Votar</div>
+                </div>
+                <div class="tp-card">
+                  <div class="tp-card-name">Candidato C</div>
+                  <div class="tp-card-btn">Votar</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Cores</div>
+            <div class="theme-grid">
+              <div class="form-group">
+                <label>Fundo Principal</label>
+                <div class="color-input-wrap">
+                  <input type="color" id="t_bg_picker" oninput="syncTextField('t_bg_picker','t_bg')" />
+                  <input type="text" id="t_bg" placeholder="#07060e" oninput="syncColorPicker('t_bg','t_bg_picker')" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Superfície</label>
+                <div class="color-input-wrap">
+                  <input type="color" id="t_surface_picker" oninput="syncTextField('t_surface_picker','t_surface')" />
+                  <input type="text" id="t_surface" placeholder="#0d0c1a"
+                    oninput="syncColorPicker('t_surface','t_surface_picker')" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Cor de Destaque</label>
+                <div class="color-input-wrap">
+                  <input type="color" id="t_accent_picker" oninput="syncTextField('t_accent_picker','t_accent')" />
+                  <input type="text" id="t_accent" placeholder="#c4973a"
+                    oninput="syncColorPicker('t_accent','t_accent_picker')" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Destaque 2</label>
+                <div class="color-input-wrap">
+                  <input type="color" id="t_accent2_picker" oninput="syncTextField('t_accent2_picker','t_accent2')" />
+                  <input type="text" id="t_accent2" placeholder="#e8d5a3"
+                    oninput="syncColorPicker('t_accent2','t_accent2_picker')" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Texto</label>
+                <div class="color-input-wrap">
+                  <input type="color" id="t_text_picker" oninput="syncTextField('t_text_picker','t_text')" />
+                  <input type="text" id="t_text" placeholder="#ede9e0"
+                    oninput="syncColorPicker('t_text','t_text_picker')" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Fundo Cartão</label>
+                <div class="color-input-wrap">
+                  <input type="color" id="t_cardBg_picker" oninput="syncTextField('t_cardBg_picker','t_cardBg')" />
+                  <input type="text" id="t_cardBg" placeholder="#0e0d1c"
+                    oninput="syncColorPicker('t_cardBg','t_cardBg_picker')" />
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="saveTheme()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              Guardar e Aplicar Tema
+            </button>
+          </div>
+        </div>
+
+      </main>
+    </div>
   </div>
-</div>
 
-<!-- CANDIDATE MODAL -->
-<div class="modal-overlay" id="candidateModal">
-  <div class="modal-box">
-    <div class="modal-header">
-      <h3 id="candidateModalTitle">Adicionar Candidato</h3>
-      <button class="modal-close" onclick="closeModal('candidateModal')">✕</button>
-    </div>
-    <div class="form-group">
-      <label>Nome *</label>
-      <input type="text" id="c_name" placeholder="ex: Mariza"/>
-    </div>
-    <div class="form-group">
-      <label>Subtítulo / Categoria</label>
-      <input type="text" id="c_subtitle" placeholder="ex: Fado, Best Actress, Portugal..."/>
-    </div>
-    <div class="form-group">
-      <label>Descrição (opcional)</label>
-      <textarea id="c_description" rows="3" placeholder="Breve descrição..."></textarea>
-    </div>
-    <div class="form-group">
-      <label>Foto</label>
-      <label class="photo-upload-area" for="photoFileInput">
-        <input type="file" id="photoFileInput" accept="image/png,image/jpeg,image/webp" onchange="handlePhotoUpload(this)"/>
-        <div style="font-size:1.5rem">📷</div>
-        <div class="upload-hint">Clica para fazer upload<br/><strong>PNG / JPG / WEBP</strong> · Máx. 500KB</div>
-        <img id="c_photoPreview" src="" alt="Preview"/>
-      </label>
-      <input type="hidden" id="c_photoB64"/>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('candidateModal')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveCandidate()">Guardar</button>
+  <!-- CANDIDATE MODAL -->
+  <div class="modal-overlay" id="candidateModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="candidateModalTitle">Adicionar Candidato</h3>
+        <button class="modal-close" onclick="closeModal('candidateModal')">✕</button>
+      </div>
+      <div class="form-group"><label>Nome *</label><input type="text" id="c_name" placeholder="ex: Mariza" /></div>
+      <div class="form-group"><label>Subtítulo / Categoria</label><input type="text" id="c_subtitle"
+          placeholder="ex: Fado, Best Actress, Portugal..." /></div>
+      <div class="form-group"><label>Descrição (opcional)</label><textarea id="c_description" rows="3"
+          placeholder="Breve descrição..."></textarea></div>
+      <div class="form-group">
+        <label>Foto</label>
+        <label class="photo-upload-area" for="photoFileInput">
+          <input type="file" id="photoFileInput" accept="image/png,image/jpeg,image/webp"
+            onchange="handlePhotoUpload(this)" />
+          <div style="font-size:1.5rem">📷</div>
+          <div class="upload-hint">Clica para fazer upload<br /><strong>PNG / JPG / WEBP</strong> · Máx. 500KB</div>
+          <img id="c_photoPreview" src="" alt="Preview" />
+        </label>
+        <input type="hidden" id="c_photoB64" />
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('candidateModal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveCandidate()">Guardar</button>
+      </div>
     </div>
   </div>
-</div>
 
-<div class="toast" id="toast"></div>
+  <div class="toast" id="toast"></div>
 
 </body>
+
 </html>
