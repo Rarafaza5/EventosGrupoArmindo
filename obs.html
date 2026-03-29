@@ -45,7 +45,7 @@
       })(performance.now());
     }
 
-    /* ── LUMINANCE GUARD (prevents bright themes from blowing out OBS) ── */
+    /* ── LUMINANCE GUARD ── */
     function perceivedLum(hex) {
       hex = (hex || '#07060e').replace('#','').padEnd(6,'0');
       const r = parseInt(hex.slice(0,2),16)/255, g = parseInt(hex.slice(2,4),16)/255, b = parseInt(hex.slice(4,6),16)/255;
@@ -89,11 +89,9 @@
           const style = getComputedStyle(document.documentElement);
           const acc = style.getPropertyValue('--acc').trim() || '#c4973a';
           const bgColor = style.getPropertyValue('--bg').trim() || '#07060e';
-          // Always fill with the (already-clamped-dark) bg — canvas is self-contained
           auroraCtx.globalAlpha = 1;
           auroraCtx.fillStyle = bgColor;
           auroraCtx.fillRect(0, 0, 1920, 1080);
-          // Parse accent hex to rgb
           const hx = acc.replace('#', '').padEnd(6,'0');
           const ar = parseInt(hx.substring(0, 2), 16), ag = parseInt(hx.substring(2, 4), 16), ab = parseInt(hx.substring(4, 6), 16);
           for (let layer = 0; layer < 4; layer++) {
@@ -142,23 +140,8 @@
       const el = document.getElementById('voteFlash'); if (!el) return;
       el.classList.add('active'); clearTimeout(vFTO);
       vFTO = setTimeout(() => el.classList.remove('active'), 800);
-      // Ripple on total counter
       const tc = document.getElementById('totalCount');
       if (tc) { tc.classList.remove('count-pop'); void tc.offsetWidth; tc.classList.add('count-pop'); }
-    }
-
-    /* ── LEADER CHANGE BANNER ── */
-    function showLeaderBanner(name, cat) {
-      const b = document.getElementById('leaderBanner'); if (!b) return;
-      b.querySelector('.lcb-name').textContent = name;
-      b.querySelector('.lcb-cat').textContent = cat || '';
-      b.classList.remove('show');
-      void b.offsetWidth;
-      b.classList.add('show'); clearTimeout(lcTO);
-      lcTO = setTimeout(() => b.classList.remove('show'), 6000);
-      spawnParticles(70);
-      // Spotlight pulse
-      triggerSpotlight();
     }
 
     /* ── SPOTLIGHT PULSE ── */
@@ -222,21 +205,19 @@
       const bc = config.broadcast || {};
       const catId = bc.catId || config.activeCategory || config.categories?.[0]?.id || 'default';
       
-      // Suspense toggle
       if (bc.suspense) {
         document.getElementById('scaleRoot').classList.add('suspense');
       } else {
         document.getElementById('scaleRoot').classList.remove('suspense');
       }
 
-      // Category change wipe
+      if (bc.cleanMode !== false) { document.body.classList.add('mode-clean'); } else { document.body.classList.remove('mode-clean'); }
       const catChanged = prevCatId !== null && prevCatId !== catId;
       prevCatId = catId;
 
       const { cat, cands, total } = resolveCat(config, votes, catId);
-      const catLabel = bc.customLabel || cat.name;
+      const catLabel = bc.customLabel || config.title || cat.name;
 
-      // VFX Triggers (Manual Override)
       if (bc.trigger_confetti && bc.trigger_confetti > lastConfetti) {
         lastConfetti = bc.trigger_confetti;
         confetti({ particleCount: 200, spread: 140, origin: { y: 0.1 }, zIndex: 9999, colors: ['#c4973a','#e8d5a3','#ffffff'] });
@@ -273,17 +254,13 @@
       const eyebrowText = bc.eyebrowText || 'Resultados em Tempo Real';
       const footerText = bc.footerText || 'vote.grupoarmindo.me';
 
-      // Flash & leader detection
       const prevT = pTot[cat.id] || 0;
       if (total > prevT && revealed >= cands.length) flashVote();
       pTot[cat.id] = total;
       if (cands.length > 0 && cands[0].count > 0) {
-        const ldr = cands[0].name;
-        if (prevLeader && prevLeader !== ldr) { showLeaderBanner(ldr, cat.name); winnerShown = false; }
-        prevLeader = ldr;
+        prevLeader = cands[0].name;
       }
 
-      // Winner reveal: triggered when 1st place (last in reveal order) is newly revealed
       const prevRevealedCount = parseInt(document.getElementById('bc_prev_revealed')?.value || '0');
       const isFirstReveal = revealed > prevRevealedCount && revealed === cands.length;
       if (document.getElementById('bc_prev_revealed')) document.getElementById('bc_prev_revealed').value = revealed;
@@ -293,31 +270,22 @@
         setTimeout(() => showWinnerReveal(cands[0].name, cands[0].subtitle || '', pct, catLabel), 600);
       }
 
-      // Header updates (immediate, not gated behind wipe)
       document.getElementById('bcTitle').textContent = config.title || 'VOTAÇÃO';
       document.getElementById('bcEyebrow').textContent = eyebrowText;
       document.getElementById('liveDot').className = 'live-dot' + (isOpen ? ' on' : ' off');
       const stag = document.getElementById('statusTag');
       stag.textContent = isOpen ? 'AO VIVO' : 'ENCERRADO'; stag.className = 'status-tag' + (isOpen ? ' live' : '');
 
-      // Total
       if (showLive) { animCount(document.getElementById('totalCount'), pTot['__d'] || 0, total); pTot['__d'] = total; document.getElementById('totalBox').style.display = 'flex'; }
       else document.getElementById('totalBox').style.display = 'none';
 
-      // Clock
       document.querySelectorAll('.bc-clock-wrap').forEach(el => el.style.display = showClock ? '' : 'none');
-      // Status
       document.getElementById('statusTag').style.display = showStatus ? '' : 'none';
       document.getElementById('liveDot').style.display = showStatus ? '' : 'none';
-
-      // Footer
       document.getElementById('bbUrl').textContent = footerText;
 
-      // Layout
       const stage = document.getElementById('mainStage');
       stage.className = 'stage layout-' + layout;
-
-      // Spoke
       const sa = document.getElementById('spokeArea');
       sa.style.display = (showSpoke && layout !== 'full') ? 'flex' : 'none';
       const sn = bc.spokespersonName || '', sr = bc.spokespersonRole || '';
@@ -325,7 +293,6 @@
       document.getElementById('spokeRole').textContent = sr;
       document.getElementById('spokeNameplate').style.display = (sn || sr) ? 'flex' : 'none';
 
-      // Category label + rows — with wipe if category changed
       const doRender = () => {
         document.getElementById('bcCatLabel').textContent = catLabel;
         document.getElementById('bbMid').textContent = catLabel;
@@ -374,7 +341,6 @@
             ${showCount ? `<div class="bc-row-count-inline">${c.count.toLocaleString('pt-PT')}</div>` : ''}
             ${showPct ? `<div class="bc-row-pct-inline">${pct}%</div>` : ''}`;
         } else {
-          // card (default)
           row.innerHTML = `
             <div class="bc-row-rank">${isLeader ? '◆' : String(rank).padStart(2, '0')}</div>
             ${showPhotos ? `<div class="bc-row-photo">${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="bc-initial">${c.name.charAt(0)}</div>`}</div>` : ''}
@@ -394,10 +360,8 @@
       });
     }
 
-    onValue(ref(db, 'config'), snap => { cfg = snap.val() || {}; render(cfg, vts); setConnectionStatus(true); },
-      err => setConnectionStatus(false));
-    onValue(ref(db, 'sessions'), snap => { vts = snap.val() || {}; if (cfg) render(cfg, vts); setConnectionStatus(true); },
-      err => setConnectionStatus(false));
+    onValue(ref(db, 'config'), snap => { cfg = snap.val() || {}; render(cfg, vts); setConnectionStatus(true); }, err => setConnectionStatus(false));
+    onValue(ref(db, 'sessions'), snap => { vts = snap.val() || {}; if (cfg) render(cfg, vts); setConnectionStatus(true); }, err => setConnectionStatus(false));
     document.addEventListener('DOMContentLoaded', () => { startClock(); buildAurora(); });
   </script>
   <link rel="stylesheet" href="obs.css" />
@@ -425,7 +389,6 @@
     <div class="conn-dot ok" id="connDot"></div>
     <input type="hidden" id="bc_prev_revealed" value="0" />
 
-    <!-- WINNER OVERLAY -->
     <div id="winnerOverlay">
       <div class="wo-eyebrow">🏆 &nbsp; Vencedor &nbsp; 🏆</div>
       <div class="wo-card">
@@ -442,12 +405,7 @@
       </div>
     </div>
 
-    <div id="leaderBanner">
-      <div class="lcb-eyebrow">Novo Líder</div>
-      <div class="lcb-headline">Passou à frente</div>
-      <div class="lcb-name"></div>
-      <div class="lcb-cat"></div>
-    </div>
+    <!-- LEADER BANNER REMOVED BY USER REQUEST -->
 
     <div class="stage layout-split" id="mainStage">
       <div class="topbar">

@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#07060e" />
   <meta name="description" content="Votação ao vivo — Grupo Armindo. Vota no teu favorito em tempo real." />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Votação — Grupo Armindo</title>
   <link rel="manifest" href="/manifest.json" />
@@ -140,6 +140,8 @@
     function showClosedScreen(eventName, reason) {
       const cs = document.getElementById('closedScreen');
       const vs = document.getElementById('votingScreen');
+      const so = document.getElementById('successOverlay');
+      if (so) so.classList.remove('show');
       cs.style.display = 'flex';
       vs.style.display = 'none';
       document.getElementById('closedEventName').textContent = eventName || '';
@@ -147,7 +149,8 @@
       if (reason === 'voted') {
         document.getElementById('closedHeadline').textContent = 'Votação Completa';
         document.getElementById('closedEyebrow').textContent = 'Obrigado pela tua participação';
-        sub.textContent = 'Votaste em todas as categorias. Aguarda os resultados em directo.';
+        const done = countVotedCats(currentSessionId, categories);
+        sub.textContent = `A tua votação (${done}/${categories.length}) foi registada com sucesso. Aguarda os resultados em directo.`;
         document.getElementById('closedIcon').innerHTML = `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
         document.getElementById('closedRingEl').classList.add('ring--success');
         spawnCelebrationParticles();
@@ -307,11 +310,11 @@
       // Auto-advance to next unvoted category
       const nextUnvoted = categories.findIndex(c => !voterSelections[c.id]);
       if (nextUnvoted >= 0 && nextUnvoted !== activeCatIndex) {
-        setTimeout(() => switchCategory(nextUnvoted), 600);
+        setTimeout(() => switchCategory(nextUnvoted), 50);
       }
     }
 
-    async function submitVote() {
+    window.submitVote = async function submitVote() {
       if (!votingOpen || hasSubmitted || !currentSessionId) {
         showToast('⛔ Não é possível submeter agora.');
         return;
@@ -350,7 +353,13 @@
       // 🎉 Confetti burst on success
       launchConfetti();
 
-      showVoteSuccess(Object.values(voterSelections).join(', '), 'Todas as categorias');
+      const names = Object.entries(voterSelections).map(([catId, candId]) => {
+        const cat = categories.find(c => c.id === catId);
+        const cand = cat?.candidates?.find(c => c.id === candId);
+        return cand?.name || candId;
+      }).join(', ');
+
+      showVoteSuccess(names, categories.length > 1 ? 'Votos Registados' : '');
       setTimeout(() => showClosedScreen(currentConfig?.title || 'Votação', 'voted'), 3400);
       updateSubmitState();
       renderCategoryTabs();
@@ -370,8 +379,10 @@
 
     function showVoteSuccess(name, catName) {
       const overlay = document.getElementById('successOverlay');
+      const cs = document.getElementById('closedScreen');
+      if (cs) cs.style.display = 'none';
       document.getElementById('successName').textContent = name;
-      document.getElementById('successCat').textContent = categories.length > 1 ? catName : '';
+      document.getElementById('successCat').textContent = catName;
       overlay.classList.add('show');
       spawnSuccessParticles();
       setTimeout(() => overlay.classList.remove('show'), 3200);

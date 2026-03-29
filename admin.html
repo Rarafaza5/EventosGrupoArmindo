@@ -101,6 +101,13 @@
           e.preventDefault();
           window.bcRevealNext();
         }
+        // Scene Shortcuts (1-9)
+        if (active && e.key >= '1' && e.key <= '9' && !e.target.matches('input,textarea,select')) {
+          e.preventDefault();
+          const idx = parseInt(e.key) - 1;
+          const scenes = Object.keys(window.allScenes || {});
+          if (scenes[idx]) window.applyScene(scenes[idx]);
+        }
       });
     });
 
@@ -139,6 +146,12 @@
         document.getElementById('candidateCount').textContent = total + ' candidatos em ' + categories.length + ' categori' + (categories.length === 1 ? 'a' : 'as');
         populateOverlayForm(config.overlay);
         populateBroadcastForm(config.broadcast);
+        renderSpokespersons(config.spokespersons);
+      });
+      // Snapier Scene Deck updates
+      onValue(ref(db, 'config/scenes'), (snap) => {
+        const scenes = snap.val() || {};
+        renderScenesDeck(scenes);
       });
       onValue(ref(db, 'sessions'), (snap) => {
         const sessions = snap.val() || {};
@@ -292,6 +305,9 @@
               <button class="btn-icon" title="Editar categoria" onclick="editCategory(${ci})">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </button>
+              <button class="btn-icon" title="Duplicar categoria" onclick="duplicateCategory(${ci})">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
               <button class="btn-icon danger" title="Remover categoria" onclick="removeCategory(${ci})">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
               </button>
@@ -327,6 +343,9 @@
           <div class="c-actions">
             <button class="btn-icon" title="Editar" onclick="editCandidate('${cat.id}',${i})">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="btn-icon" title="Duplicar" onclick="duplicateCandidate('${cat.id}',${i})">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
             <button class="btn-icon danger" title="Remover" onclick="removeCandidate('${cat.id}',${i})">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -497,6 +516,20 @@
       showToast('✦ Categoria removida');
     };
 
+    window.duplicateCategory = async function (i) {
+      const original = categories[i];
+      const copy = JSON.parse(JSON.stringify(original));
+      copy.id = 'cat_' + Date.now();
+      copy.name += ' (Cópia)';
+      // Deep copy candidates too
+      if (copy.candidates) {
+        copy.candidates.forEach(c => c.id = 'c_' + (Math.random() * 1e9 | 0));
+      }
+      categories.splice(i + 1, 0, copy);
+      await set(ref(db, 'config/categories'), categories);
+      showToast('✦ Categoria duplicada');
+    };
+
     // ── CANDIDATE CRUD ──
     window.openAddCandidate = function (catId) {
       activeCatForCandidates = catId;
@@ -535,6 +568,18 @@
       cat.candidates.splice(i, 1);
       await set(ref(db, 'config/categories'), categories);
       showToast('✦ Candidato removido');
+    };
+
+    window.duplicateCandidate = async function (catId, i) {
+      const cat = categories.find(c => c.id === catId);
+      if (!cat) return;
+      const original = cat.candidates[i];
+      const copy = JSON.parse(JSON.stringify(original));
+      copy.id = 'c_' + Date.now();
+      copy.name += ' (Cópia)';
+      cat.candidates.splice(i + 1, 0, copy);
+      await set(ref(db, 'config/categories'), categories);
+      showToast('✦ Candidato duplicado');
     };
 
     window.saveCandidate = async function () {
@@ -700,19 +745,45 @@
     let qrInstance = null;
     function generateQR() {
       const url = location.origin + '/index.html';
-      document.getElementById('qrUrl').textContent = url;
+      const deckUrl = location.origin + '/deck.html';
+      const urlEl = document.getElementById('qrUrl');
+      if (urlEl) urlEl.textContent = url;
+      
       const container = document.getElementById('qrCanvas');
+      if (!container) return; // Safety: exit if basic QR container missing
+      
       container.innerHTML = '';
+      const deckContainer = document.getElementById('deckQrCanvas');
+      if (deckContainer) deckContainer.innerHTML = '';
+
       if (typeof QRCode !== 'undefined') {
-        qrInstance = new QRCode(container, {
-          text: url, width: 160, height: 160,
-          colorDark: '#c4973a', colorLight: '#07060e',
-          correctLevel: QRCode.CorrectLevel.M
-        });
+        try {
+          new QRCode(container, {
+            text: url, width: 160, height: 160,
+            colorDark: '#c4973a', colorLight: '#07060e',
+            correctLevel: QRCode.CorrectLevel.M
+          });
+          if (deckContainer) {
+            new QRCode(deckContainer, {
+              text: deckUrl, width: 220, height: 220,
+              colorDark: '#07060e', colorLight: '#ffffff',
+              correctLevel: QRCode.CorrectLevel.M
+            });
+          }
+        } catch (e) {
+          console.warn('QRCode generation delayed or failed', e);
+        }
       } else {
         container.innerHTML = `<a href="${url}" target="_blank" style="color:var(--accent);font-size:.75rem;word-break:break-all">${url}</a>`;
       }
     }
+
+    window.toggleDeckQR = function() {
+      const el = document.getElementById('deckQrOverlay');
+      const isShowing = el.style.display === 'flex';
+      el.style.display = isShowing ? 'none' : 'flex';
+      if (!isShowing) generateQR();
+    };
 
     // ── SUSPENSE MODE ──
     window.triggerSuspense = async function() {
@@ -767,8 +838,21 @@
         catId: document.getElementById('bc_catId').value,
         customLabel: document.getElementById('bc_label').value.trim(),
         revealed: parseInt(document.getElementById('bc_revealed_count')?.textContent || '0') || config.broadcast?.revealed || 0,
+        showSpokesperson: document.getElementById('bc_showSpokesperson').checked,
+        spokespersonName: document.getElementById('bc_spokespersonName').value.trim(),
+        spokespersonRole: document.getElementById('bc_spokespersonRole').value.trim(),
+        layout: document.getElementById('bc_layout').value,
+        rowStyle: document.getElementById('bc_rowStyle').value,
+        eyebrowText: document.getElementById('bc_eyebrow').value.trim(),
+        footerText: document.getElementById('bc_footer').value.trim(),
+        cleanMode: document.getElementById('bc_cleanMode').checked,
         showLiveVotes: document.getElementById('bc_showLive').checked,
+        showPhotos: document.getElementById('bc_showPhotos').checked,
+        showBars: document.getElementById('bc_showBars').checked,
+        showPct: document.getElementById('bc_showPct').checked,
+        showCount: document.getElementById('bc_showCount').checked,
         highlightLeader: document.getElementById('bc_hlLeader').checked,
+        showStatus: document.getElementById('bc_showStatus').checked,
       };
       await set(ref(db, 'config/broadcast'), bc);
       config.broadcast = bc;
@@ -789,10 +873,10 @@
       const revealed = bc.revealed ?? 0;
       const el = document.getElementById('bc_revealed_count');
       if (el) el.textContent = revealed;
+      const elMax = document.getElementById('bc_total_count');
+      if (elMax) elMax.textContent = max;
       const prog = document.getElementById('bc_prog');
       if (prog) prog.style.width = max > 0 ? (revealed / max * 100) + '%' : '0%';
-      const progText = document.getElementById('bc_prog_text');
-      if (progText) progText.textContent = `${revealed} / ${max} revelados`;
       const nextBtn = document.getElementById('bc_next_btn');
       if (nextBtn) {
         const next = (cat?.candidates || []).slice().reverse()[revealed];
@@ -806,10 +890,140 @@
       const catSel = document.getElementById('bc_catId');
       if (catSel) catSel.innerHTML = categories.map(c => `<option value="${c.id}"${c.id === (o.catId || categories[0]?.id) ? ' selected' : ''}>${c.name}</option>`).join('');
       setVal('bc_label', o.customLabel || '');
+      setCheck('bc_showSpokesperson', o.showSpokesperson !== false);
+      setVal('bc_spokespersonName', o.spokespersonName || '');
+      setVal('bc_spokespersonRole', o.spokespersonRole || '');
+      setVal('bc_layout', o.layout || 'split');
+      setVal('bc_rowStyle', o.rowStyle || 'card');
+      setVal('bc_eyebrow', o.eyebrowText || '');
+      setVal('bc_footer', o.footerText || '');
+      setCheck('bc_cleanMode', o.cleanMode !== false);
       setCheck('bc_showLive', o.showLiveVotes !== false);
+      setCheck('bc_showPhotos', o.showPhotos !== false);
+      setCheck('bc_showBars', o.showBars !== false);
+      setCheck('bc_showPct', o.showPct !== false);
+      setCheck('bc_showCount', o.showCount !== false);
       setCheck('bc_hlLeader', o.highlightLeader !== false);
+      setCheck('bc_showStatus', o.showStatus !== false);
       renderBroadcastPreview();
     }
+    // ── SCENES (OBS PRESETS) ──
+    window.allScenes = null;
+
+    window.renderScenesDeck = function(scenesObj) {
+      window.allScenes = scenesObj || {};
+      const deck = document.getElementById('bc_scenes_deck');
+      if (!deck) return;
+      const keys = Object.keys(allScenes);
+      if (keys.length === 0) {
+        deck.innerHTML = '<div style="font-size:.8rem;color:var(--text-muted);font-style:italic;">Nenhuma cena guardada. Configura os painéis em baixo e clica em "Guardar Nova Cena".</div>';
+        return;
+      }
+      
+      deck.innerHTML = '';
+      keys.forEach((k, idx) => {
+        const s = allScenes[k];
+        const btn = document.createElement('div');
+        btn.style.cssText = `
+          position: relative;
+          width: 130px; height: 90px;
+          background: linear-gradient(135deg, var(--surface2), #111022);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          cursor: pointer;
+          transition: all 0.2s;
+          box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+          overflow: hidden;
+          text-align: center;
+          padding: 8px;
+        `;
+        btn.onmouseenter = () => {
+          btn.style.borderColor = 'var(--acc)';
+          btn.style.transform = 'translateY(-2px) scale(1.02)';
+          btn.style.boxShadow = '0 8px 25px rgba(212, 168, 67, 0.2)';
+          btn.querySelector('.del-btn').style.opacity = '1';
+        };
+        btn.onmouseleave = () => {
+          btn.style.borderColor = 'var(--border)';
+          btn.style.transform = 'none';
+          btn.style.boxShadow = '0 4px 15px rgba(0,0,0,0.4)';
+          btn.querySelector('.del-btn').style.opacity = '0';
+        };
+        
+        btn.title = `Atalho: Tecla ${idx + 1}`;
+        btn.innerHTML = `
+          <div style="position:absolute; top:8px; left:10px; font-size:10px; color:var(--acc); opacity:0.8; font-weight:700;">${idx + 1}</div>
+          <div style="font-size: 1.8rem; margin-bottom: 6px;">${s.cleanMode === false ? '📺' : '🎬'}</div>
+          <div style="font-size: 0.72rem; font-weight: 600; line-height: 1.2; word-break: break-word; color: #fff;">${s.name || 'Cena'}</div>
+          <div class="del-btn" style="position:absolute;top:4px;right:6px;font-size:14px;opacity:0;transition:opacity 0.2s;background:var(--danger);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:1;" onclick="deleteScene(event, '${k}')">×</div>
+        `;
+        btn.onclick = () => applyScene(k);
+        deck.appendChild(btn);
+      });
+    };
+
+    window.saveAsScene = async function () {
+      const input = document.getElementById('scene_capture_name');
+      let name = input ? input.value.trim() : "";
+      if (!name) { 
+        name = `Cena ${new Date().toLocaleTimeString('pt-PT', {hour12: false})}`;
+      }
+      
+      const bc = {
+        name: name,
+        catId: document.getElementById('bc_catId').value,
+        customLabel: document.getElementById('bc_label').value.trim(),
+        revealed: parseInt(document.getElementById('bc_revealed_count')?.textContent || '0') || config.broadcast?.revealed || 0,
+        showSpokesperson: document.getElementById('bc_showSpokesperson').checked,
+        spokespersonName: document.getElementById('bc_spokespersonName').value.trim(),
+        spokespersonRole: document.getElementById('bc_spokespersonRole').value.trim(),
+        layout: document.getElementById('bc_layout').value,
+        rowStyle: document.getElementById('bc_rowStyle').value,
+        eyebrowText: document.getElementById('bc_eyebrow').value.trim(),
+        footerText: document.getElementById('bc_footer').value.trim(),
+        cleanMode: document.getElementById('bc_cleanMode').checked,
+        showLiveVotes: document.getElementById('bc_showLive').checked,
+        showPhotos: document.getElementById('bc_showPhotos').checked,
+        showBars: document.getElementById('bc_showBars').checked,
+        showPct: document.getElementById('bc_showPct').checked,
+        showCount: document.getElementById('bc_showCount').checked,
+        highlightLeader: document.getElementById('bc_hlLeader').checked,
+        showStatus: document.getElementById('bc_showStatus').checked,
+      };
+      
+      const newRef = push(ref(db, 'config/scenes'));
+      await set(newRef, bc);
+      if (input) input.value = "";
+      showToast(`✦ Cena "${name}" Guardada`);
+    };
+
+    window.applyScene = async function (sceneId) {
+      if (!window.allScenes || !window.allScenes[sceneId]) return;
+      const scene = window.allScenes[sceneId];
+      populateBroadcastForm(scene);
+      await saveBroadcast();
+      showToast('🎬 Cena lançada no Ar: ' + scene.name);
+    };
+
+    window.deleteScene = async function (e, sceneId) {
+      e.stopPropagation();
+      if (!confirm("De certeza que queres eliminar esta Cena do Deck?")) return;
+      await set(ref(db, 'config/scenes/' + sceneId), null);
+      showToast('🗑 Cena apagada');
+    };
+
+    window.masterClear = async function() {
+      if(!confirm("⚠️ Limpar ecrã? Todos os gráficos desaparecerão do OBS.")) return;
+      const cleanBc = {
+        ...config.broadcast,
+        cleanMode: true,
+        showSpokesperson: false,
+        revealed: 0
+      };
+      await set(ref(db, 'config/broadcast'), cleanBc);
+      showToast('🌪 MASTER CLEAR EXECUTADO');
+    };
 
     window.selectMode = function (mode, el) {
       document.getElementById('ov_mode').value = mode;
@@ -857,6 +1071,52 @@
       a.download = `resultados_${config.sessionId || 'sessao'}_${new Date().toISOString().slice(0,10)}.csv`;
       a.click();
       showToast('✔️ Resultados exportados');
+    };
+
+    // ── SPOKESPERSONS ──
+    window.renderSpokespersons = function(list) {
+      const grid = document.getElementById('spokes_grid');
+      if (!grid) return;
+      grid.innerHTML = '';
+      const items = list || {};
+      const keys = Object.keys(items);
+      
+      if (keys.length === 0) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--text-muted); font-style:italic;">Nenhum porta-voz configurado.</div>';
+        return;
+      }
+
+      keys.forEach(id => {
+        const p = items[id];
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.style.position = 'relative';
+        card.innerHTML = `
+          <div style="font-weight:700; color:var(--accent); font-size:1rem; margin-bottom:4px;">${p.name}</div>
+          <div style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">${p.role}</div>
+          <button class="btn-icon danger" style="position:absolute; top:15px; right:15px;" onclick="deleteSpokesperson('${id}')">×</button>
+        `;
+        grid.appendChild(card);
+      });
+    };
+
+    window.addSpokesperson = async function() {
+      const name = document.getElementById('spoke_new_name').value.trim();
+      const role = document.getElementById('spoke_new_role').value.trim();
+      if (!name || !role) { showToast('⚠️ Preenche nome e cargo'); return; }
+      
+      const newRef = push(ref(db, 'config/spokespersons'));
+      await set(newRef, { name, role });
+      
+      document.getElementById('spoke_new_name').value = '';
+      document.getElementById('spoke_new_role').value = '';
+      showToast('🗣️ Porta-Voz adicionado');
+    };
+
+    window.deleteSpokesperson = async function(id) {
+      if (!confirm('Eliminar este porta-voz?')) return;
+      await set(ref(db, `config/spokespersons/${id}`), null);
+      showToast('🗑️ Porta-Voz eliminado');
     };
   </script>
 
@@ -2331,6 +2591,65 @@
       transform: translateY(0);
       opacity: 1;
     }
+
+    /* DIRECTOR DESK UI */
+    .director-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .obs-preview-card {
+      position: sticky; top: 24px;
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+    }
+    .obs-preview-header {
+      background: var(--surface2);
+      padding: 10px 15px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.65rem; font-weight: 700; color: var(--text-muted); letter-spacing: 0.1em;
+    }
+    .obs-preview-body {
+      position: relative;
+      width: 100%;
+      padding-top: 56.25%; /* 16:9 Aspect Ratio */
+      background: #111;
+    }
+    .obs-preview-iframe {
+      position: absolute; top:0; left:0; width: 1920px; height: 1080px;
+      border: none;
+      transform: scale(0.15625); /* Scalling 1920 to 300px approx (300/1920) */
+      transform-origin: 0 0;
+      pointer-events: none;
+    }
+    .obs-preview-footer {
+      padding: 8px 15px; font-size: 0.65rem; color: var(--accent);
+      background: rgba(0,0,0,0.3); text-align: center;
+    }
+
+    .lcd-card {
+      background: linear-gradient(135deg, #0e0d1c, #090814);
+      border: 1px solid rgba(196, 151, 58, 0.2);
+      box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+    }
+    
+    .status-led {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #333;
+      box-shadow: 0 0 5px rgba(0,0,0,0.5);
+    }
+    .status-led.on { background: var(--success); box-shadow: 0 0 10px var(--success); }
+
+    @media (max-width: 1100px) {
+      .director-grid { grid-template-columns: 1fr; }
+      .obs-preview-card { position: static; margin-bottom: 24px; }
+    }
   </style>
 </head>
 
@@ -2367,10 +2686,10 @@
             <span class="icon">📊</span> Resultados
           </div>
           <div class="nav-item" onclick="showSection('broadcast', this)">
-            <span class="icon">🎬</span> Broadcast
+            <span class="icon">🎬</span> Broadcast (OBS)
           </div>
-          <div class="nav-item" onclick="showSection('overlay', this)">
-            <span class="icon">📺</span> Overlay OBS
+          <div class="nav-item" onclick="showSection('spokespersons', this)">
+            <span class="icon">🗣️</span> Portas-Voz
           </div>
         </div>
         <div class="nav-section">
@@ -2385,7 +2704,27 @@
             <span class="icon">📋</span> Evento
           </div>
         </div>
+        
+        <div class="nav-section" style="margin-top:auto;">
+          <div class="nav-label">Mission Control</div>
+          <div class="nav-item" onclick="toggleDeckQR()" style="border: 1px dashed var(--acc); background: rgba(196,151,58,0.05);">
+            <span class="icon">📱</span> Remote Deck
+          </div>
+          <a href="deck.html" target="_blank" class="nav-item" style="text-decoration:none;">
+            <span class="icon">🔗</span> Abrir Deck (Cheio)
+          </a>
+        </div>
       </nav>
+
+      <!-- DECK QR OVERLAY -->
+      <div id="deckQrOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:2000; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(10px);" onclick="toggleDeckQR()">
+        <div style="background:var(--bg); padding:30px; border-radius:24px; border:1px solid var(--acc); text-align:center; box-shadow:0 0 50px rgba(196,151,58,0.2);" onclick="event.stopPropagation()">
+           <div class="card-title" style="color:var(--acc); margin-bottom:20px;">Ligar Tablet / Remote Control</div>
+           <div id="deckQrCanvas" style="padding:15px; background:#fff; border-radius:12px; display:inline-block; margin-bottom:20px;"></div>
+           <p style="font-size:0.8rem; color:var(--text-muted); max-width:260px;">Aponta a câmara do tablet ou telemóvel para controlar a emissão remotamente.</p>
+           <button class="btn btn-secondary" style="margin-top:20px;" onclick="toggleDeckQR()">FECHAR</button>
+        </div>
+      </div>
 
       <!-- MAIN -->
       <main class="main-content">
@@ -2616,18 +2955,55 @@
         <div id="sec_broadcast" class="section">
           <div class="page-header">
             <div>
-              <h1>Broadcast</h1>
-              <p>Controla a tela de transmissão ao vivo (obs.html)</p>
+              <h1>Director's Desk (Broadcast)</h1>
+              <p>Mesa de Realização: Monitorização e controlo total da emissão</p>
             </div>
           </div>
 
-          <!-- URL -->
-          <div class="ov-url-box">
-            <span class="ov-url-label">URL da Tela</span>
-            <span class="ov-url-val">obs.html</span>
-            <button class="btn btn-secondary btn-sm"
-              onclick="navigator.clipboard.writeText(location.origin+'/obs.html').then(()=>showToast('✦ URL copiado'))">Copiar</button>
-          </div>
+          <div class="director-grid">
+            <!-- COLUNA ESQUERDA: CONTROLOS -->
+            <div class="director-left">
+              
+              <!-- URL -->
+              <div class="ov-url-box" style="margin-bottom:20px;">
+                <span class="ov-url-label">LIVE OBS SOURCE</span>
+                <span class="ov-url-val" id="obs_url_display">obs.html</span>
+                <button class="btn btn-secondary btn-sm"
+                  onclick="navigator.clipboard.writeText(location.origin+'/obs.html').then(()=>showToast('✦ URL copiado'))">Copiar</button>
+              </div>
+
+              <!-- CENAS / PRESETS -->
+              <div class="card lcd-card" style="border-color: var(--acc); background: #0a0914;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                   <div class="card-title" style="color: var(--acc); margin:0;">🔥 Studio Deck (Realização)</div>
+                   <div style="font-size:0.65rem; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Shortcuts [1..9]</div>
+                </div>
+                
+                <div class="scene-capture-bar" style="display:flex; gap:8px; margin-bottom:15px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border:1px dashed rgba(255,255,255,0.1);">
+                  <input type="text" id="scene_capture_name" placeholder="Nome da cena atual..." style="flex:1; background:transparent; border:none; color:#fff; font-size:0.8rem; outline:none;">
+                  <button class="btn btn-primary btn-sm" onclick="saveAsScene()" style="padding:4px 12px; font-size:0.7rem; letter-spacing:0.05em;">FOTOGRAFAR ESTADO</button>
+                </div>
+
+                <div id="bc_scenes_deck" style="display:flex;gap:12px;flex-wrap:wrap;">
+                  <div style="font-size:.8rem;color:var(--text-muted);font-style:italic;">Nenhuma cena guardada.</div>
+                </div>
+              </div>
+
+              <!-- BOTÕES DE DISPARO RÁPIDO (VFX) -->
+              <div class="card" style="background: rgba(255,255,255,0.03);">
+                <div class="card-title">Comandos de Impacto (VFX)</div>
+                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
+                  <button class="btn btn-secondary" style="border-color:#d4af37; color:#fff; background:rgba(212,175,55,0.1); flex-direction:column; padding:15px; font-weight:700;" onclick="triggerObsEvent('confetti')">
+                    <span style="font-size:1.5rem; margin-bottom:5px;">🎉</span> Confettis
+                  </button>
+                  <button class="btn btn-secondary" style="border-color:#4fdb82; color:#fff; background:rgba(79,219,130,0.1); flex-direction:column; padding:15px; font-weight:700;" onclick="triggerObsEvent('winner')">
+                    <span style="font-size:1.5rem; margin-bottom:5px;">🏆</span> Vencedor
+                  </button>
+                  <button class="btn btn-secondary" style="border-color:#ff4757; color:#fff; background:rgba(255,71,87,0.1); flex-direction:column; padding:15px; font-weight:700;" onclick="triggerObsEvent('closed')">
+                    <span style="font-size:1.5rem; margin-bottom:5px;">🛑</span> Fecho
+                  </button>
+                </div>
+              </div>
 
           <!-- REVELAÇÃO -->
           <div class="card">
@@ -2639,9 +3015,9 @@
             <div class="bc-reveal-bar">
               <div style="display:flex;justify-content:space-between;align-items:center">
                 <span style="font-size:.78rem;font-weight:500">Progresso da Revelação</span>
-                <span id="bc_prog_text"
-                  style="font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--text-muted)">0 / 0
-                  revelados</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--text-muted)">
+                   <span id="bc_revealed_count">0</span> / <span id="bc_total_count">0</span> revelados
+                </span>
               </div>
               <div class="bc-prog-wrap">
                 <div id="bc_prog"></div>
@@ -2656,12 +3032,12 @@
             </div>
           </div>
 
-          <!-- CATEGORIA & ETIQUETA -->
+          <!-- CATEGORIA & SPOKESPERSON -->
           <div class="card">
-            <div class="card-title">Categoria em Cena</div>
-            <div class="bc-spoke-grid">
+            <div class="card-title">Categoria & Câmara</div>
+            <div class="bc-spoke-grid" style="margin-bottom: 14px;">
               <div class="form-group">
-                <label>Categoria</label>
+                <label>Categoria em Cena</label>
                 <select id="bc_catId" onchange="saveBroadcast()"
                   style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:.88rem;outline:none;cursor:pointer"></select>
               </div>
@@ -2670,240 +3046,275 @@
                 <input type="text" id="bc_label" placeholder="Deixa vazio para usar o nome da categoria" />
               </div>
             </div>
+            
+            <div class="ov-control-row" style="margin-bottom: 14px; border-color: var(--accent);">
+              <div class="ov-control-label">Ativar Painel de Spokesperson<small>Abre espaço lateral para a câmara do convidado / porta-voz no OBS</small></div>
+              <label class="toggle"><input type="checkbox" id="bc_showSpokesperson" />
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+            <div class="bc-spoke-grid">
+               <div class="form-group">
+                <label>Nome do porta-voz (Spokesperson)</label>
+                <input type="text" id="bc_spokespersonName" placeholder="Ex: Júlia Pinheiro" />
+              </div>
+              <div class="form-group">
+                <label>Cargo / Subtítulo</label>
+                <input type="text" id="bc_spokespersonRole" placeholder="Ex: Apresentadora" />
+              </div>
+            </div>
           </div>
-
-          <!-- AÇÕES DIRETAS (VFX) -->
+          
+          <!-- LAYOUT E TEXTOS -->
           <div class="card">
-            <div class="card-title">Efeitos Visuais Manuais (VFX)</div>
-            <p style="font-size:.78rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6">Estes botões disparam efeitos no OBS imediatamente, independentemente do progresso da revelação.</p>
-            <div style="display:flex;gap:10px;flex-wrap:wrap">
-              <button class="btn btn-secondary" style="border-color:#d4af37;color:#fff2b2" onclick="triggerObsEvent('confetti')">🎉 Lançar Confettis</button>
-              <button class="btn btn-secondary" style="border-color:#4fdb82;color:#b2ffce" onclick="triggerObsEvent('winner')">🏆 Forçar Animação Vencedor</button>
-              <button class="btn btn-secondary" onclick="triggerObsEvent('closed')">🛑 Chapa "Votação Encerrada"</button>
+             <div class="card-title">Layout & Textos Base</div>
+             <div class="bc-spoke-grid" style="margin-bottom: 14px;">
+               <div class="form-group">
+                <label>Formato do Ecrã</label>
+                <select id="bc_layout"
+                  style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:.88rem;outline:none;cursor:pointer">
+                    <option value="split">Dividido (Ao centro + Câmara Dir)</option>
+                    <option value="full">Inteiro (Ao centro alargado)</option>
+                    <option value="minimal">Minimalista (Rodapé apenas)</option>
+                  </select>
+              </div>
+              <div class="form-group">
+                <label>Estilo das Linhas</label>
+                <select id="bc_rowStyle"
+                  style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:.88rem;outline:none;cursor:pointer">
+                    <option value="card">Cartões (Luxo)</option>
+                    <option value="line">Linhas Simples</option>
+                    <option value="flag">Cromos</option>
+                  </select>
+              </div>
+            </div>
+            <div class="bc-spoke-grid">
+               <div class="form-group">
+                <label>Texto Superior (Eyebrow)</label>
+                <input type="text" id="bc_eyebrow" placeholder="Ex: Resultados em Tempo Real" />
+              </div>
+              <div class="form-group">
+                <label>Link de Rodapé</label>
+                <input type="text" id="bc_footer" placeholder="Ex: vote.grupoarmindo.me" />
+              </div>
             </div>
           </div>
 
           <!-- OPÇÕES -->
           <div class="card">
-            <div class="card-title">Opções</div>
+            <div class="card-title">Visibilidade dos Elementos</div>
             <div class="ov-control-grid">
+              
               <div class="ov-control-row">
-                <div class="ov-control-label">Votos em tempo real<small>Contador de votos no topo</small></div>
+                <div class="ov-control-label">Modo Limpo (Sem Barras)<small>Esconde por completo a barra superior e o rodapé</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_cleanMode" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              
+              <div class="ov-control-row">
+                <div class="ov-control-label">Contagem em Tempo Real<small>Votos totais no topo da lista</small></div>
                 <label class="toggle"><input type="checkbox" id="bc_showLive" />
                   <div class="toggle-track"></div>
                   <div class="toggle-thumb"></div>
                 </label>
               </div>
               <div class="ov-control-row">
-                <div class="ov-control-label">Destaque do líder<small>1.º lugar com estilo especial</small></div>
+                <div class="ov-control-label">Mostrar Fotografias<small>Thumbnails nas linhas</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_showPhotos" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              <div class="ov-control-row">
+                <div class="ov-control-label">Mostrar Barras<small>Gráfico luminoso na linha</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_showBars" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              
+              <div class="ov-control-row">
+                <div class="ov-control-label">Mostrar Percentagens<small>Exibe % ao lado dos votos</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_showPct" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              
+               <div class="ov-control-row">
+                <div class="ov-control-label">Mostrar Contagem Numérica<small>Ocultar se quiseres só barras</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_showCount" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
+              </div>
+              
+              <div class="ov-control-row">
+                <div class="ov-control-label">Destaque do vencedor<small>Estilo ouro para quem está em 1º</small></div>
                 <label class="toggle"><input type="checkbox" id="bc_hlLeader" />
                   <div class="toggle-track"></div>
                   <div class="toggle-thumb"></div>
                 </label>
               </div>
-            </div>
-          </div>
-
-          <!-- GUARDAR -->
-          <button class="btn btn-primary" style="width:100%;justify-content:center;padding:14px"
-            onclick="saveBroadcast()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-              stroke-linecap="round">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-              <polyline points="17 21 17 13 7 13 7 21" />
-              <polyline points="7 3 7 8 15 8" />
-            </svg>
-            Guardar e Aplicar em Direto
-          </button>
-
-          <p style="margin-top:14px;font-size:.76rem;color:var(--text-muted);line-height:1.65">
-            No OBS: adiciona uma fonte <strong style="color:var(--text)">Browser Source</strong> → URL: <strong
-              style="color:var(--text)">obs.html</strong> · Resolução: <strong
-              style="color:var(--text)">1920×1080</strong> · O fundo é preenchido com as cores do tema escolhido. A zona
-            direita (spokesperson) serve para adicionar uma captura de câmara por cima no OBS.
-          </p>
-        </div>
-
-        <!-- OVERLAY OBS -->
-        <div id="sec_overlay" class="section">
-          <div class="page-header">
-            <div>
-              <h1>Overlay OBS</h1>
-              <p>Controla o overlay de transmissão em tempo real</p>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span class="status-badge closed" id="ovBadge">OCULTO</span>
-            </div>
-          </div>
-
-          <!-- URL box -->
-          <div class="ov-url-box">
-            <span class="ov-url-label">URL do Overlay</span>
-            <span class="ov-url-val" id="ovUrlDisplay">obs.html</span>
-            <button class="btn btn-secondary btn-sm"
-              onclick="navigator.clipboard.writeText(location.origin+'/obs.html').then(()=>showToast('✦ URL copiado'))">Copiar</button>
-          </div>
-
-          <!-- VISIBILIDADE -->
-          <div class="card" style="margin-bottom:14px">
-            <div class="card-title">Visibilidade</div>
-            <div class="ov-control-row" style="margin-bottom:0">
-              <div class="ov-control-label">
-                Mostrar Overlay
-                <small>Liga/desliga o overlay no OBS sem remover a fonte</small>
+              
+              <div class="ov-control-row">
+                <div class="ov-control-label">Tags Ao Vivo<small>Ícone live e textos de status nas extremidades</small></div>
+                <label class="toggle"><input type="checkbox" id="bc_showStatus" />
+                  <div class="toggle-track"></div>
+                  <div class="toggle-thumb"></div>
+                </label>
               </div>
-              <label class="toggle">
-                <input type="checkbox" id="ov_visible" onchange="setOverlayProp('visible', this.checked)" />
-                <div class="toggle-track"></div>
-                <div class="toggle-thumb"></div>
-              </label>
-            </div>
-          </div>
+              
+            </div> <!-- Fim de director-left -->
 
-          <!-- MODO -->
-          <div class="card" style="margin-bottom:14px">
-            <div class="card-title">Modo de Visualização</div>
-            <input type="hidden" id="ov_mode" value="leaderboard" />
-            <div class="ov-mode-btns">
-              <div class="ov-mode-btn active" onclick="selectMode('leaderboard',this)">
-                <div class="ov-mode-icon">🏆</div>
-                <div class="ov-mode-name">Leaderboard</div>
-                <div class="ov-mode-desc">Lista completa de todos os candidatos com barras</div>
-              </div>
-              <div class="ov-mode-btn" onclick="selectMode('leader',this)">
-                <div class="ov-mode-icon">⭐</div>
-                <div class="ov-mode-name">Líder</div>
-                <div class="ov-mode-desc">Apenas o candidato em 1.º lugar em destaque</div>
-              </div>
-              <div class="ov-mode-btn" onclick="selectMode('ticker',this)">
-                <div class="ov-mode-icon">📰</div>
-                <div class="ov-mode-name">Ticker</div>
-                <div class="ov-mode-desc">Barra horizontal deslizante com todos os resultados</div>
-              </div>
-              <div class="ov-mode-btn" onclick="selectMode('hidden',this)">
-                <div class="ov-mode-icon">👁️</div>
-                <div class="ov-mode-name">Oculto</div>
-                <div class="ov-mode-desc">Overlay invisível mas activo em segundo plano</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- CATEGORIA & POSIÇÃO -->
-          <div class="card" style="margin-bottom:14px">
-            <div class="card-title">Categoria & Posição</div>
-            <div class="ov-control-grid">
-              <div class="form-group">
-                <label>Categoria a mostrar</label>
-                <select id="ov_catId"
-                  style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:0.88rem;outline:none;cursor:pointer"></select>
-              </div>
-              <div class="form-group">
-                <label>Posição</label>
-                <input type="hidden" id="ov_position" value="left" />
-                <div class="ov-pos-btns">
-                  <div class="ov-pos-btn active" onclick="selectPos('left',this)">◀ Esquerda</div>
-                  <div class="ov-pos-btn" onclick="selectPos('right',this)">Direita ▶</div>
+            <!-- COLUNA DIREITA: LIVE MONITOR -->
+            <div class="director-right">
+              <div class="obs-preview-card">
+                <div class="obs-preview-header">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                     <div class="status-led on"></div>
+                     <span>LIVE FEED</span>
+                  </div>
+                  <span>1080p / 60fps</span>
+                </div>
+                <div class="obs-preview-body">
+                  <iframe src="obs.html" class="obs-preview-iframe" id="obsPreviewFrame"></iframe>
+                </div>
+                <div class="obs-preview-footer">
+                  MONITOR DE REALIZAÇÃO (SIMULADO)
                 </div>
               </div>
-              <div class="form-group" id="ov_maxRows_row">
-                <label>Número máximo de linhas</label>
-                <input type="number" id="ov_maxRows" min="3" max="15" value="10" placeholder="10"
-                  style="width:100%;padding:11px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Jost',sans-serif;font-size:0.88rem;outline:none" />
-              </div>
-              <div class="form-group">
-                <label>Título personalizado (opcional)</label>
-                <input type="text" id="ov_customTitle" placeholder="Deixa vazio para usar o título do evento" />
-              </div>
-            </div>
-          </div>
 
-          <!-- OPÇÕES -->
-          <div class="card" style="margin-bottom:14px">
-            <div class="card-title">Opções de Exibição</div>
-            <div class="ov-control-grid">
-              <div class="ov-control-row">
-                <div class="ov-control-label">Mostrar fotos<small>Thumbnails dos candidatos</small></div>
-                <label class="toggle"><input type="checkbox" id="ov_showPhotos" />
-                  <div class="toggle-track"></div>
-                  <div class="toggle-thumb"></div>
-                </label>
-              </div>
-              <div class="ov-control-row">
-                <div class="ov-control-label">Barras de progresso<small>Barra visual de percentagem</small></div>
-                <label class="toggle"><input type="checkbox" id="ov_showBars" />
-                  <div class="toggle-track"></div>
-                  <div class="toggle-thumb"></div>
-                </label>
-              </div>
-              <div class="ov-control-row">
-                <div class="ov-control-label">Total de votos<small>Contador no cabeçalho</small></div>
-                <label class="toggle"><input type="checkbox" id="ov_showTotal" />
-                  <div class="toggle-track"></div>
-                  <div class="toggle-thumb"></div>
-                </label>
-              </div>
-              <div class="ov-control-row">
-                <div class="ov-control-label">Nome da categoria<small>Subtítulo sob o título</small></div>
-                <label class="toggle"><input type="checkbox" id="ov_showCatName" />
-                  <div class="toggle-track"></div>
-                  <div class="toggle-thumb"></div>
-                </label>
-              </div>
-              <div class="ov-control-row">
-                <div class="ov-control-label">Relógio em tempo real<small>Hora no canto do overlay</small></div>
-                <label class="toggle"><input type="checkbox" id="ov_showClock" />
-                  <div class="toggle-track"></div>
-                  <div class="toggle-thumb"></div>
-                </label>
-              </div>
-              <div class="ov-control-row">
-                <div class="ov-control-label">Indicador "A Votar"<small>Footer verde quando aberto</small></div>
-                <label class="toggle"><input type="checkbox" id="ov_showStatus" />
-                  <div class="toggle-track"></div>
-                  <div class="toggle-thumb"></div>
-                </label>
+              <div class="card" style="margin-top: 20px; border-color: var(--danger);">
+                 <div class="card-title" style="color: var(--danger);">Emergência</div>
+                 <button class="btn btn-danger" style="width:100%; justify-content:center; gap:8px;" onclick="masterClear()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    MASTER CLEAR (LIMPAR)
+                 </button>
+                 <p style="font-size:0.65rem; color:var(--text-muted); margin-top:8px;">Faz o "fade out" imediato de todos os elementos no OBS.</p>
               </div>
             </div>
-          </div>
+          </div> <!-- Fim de director-grid -->
 
           <!-- GUARDAR -->
-          <button class="btn btn-primary" style="width:100%;justify-content:center;padding:14px"
-            onclick="saveOverlay()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-              stroke-linecap="round">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-              <polyline points="17 21 17 13 7 13 7 21" />
-              <polyline points="7 3 7 8 15 8" />
-            </svg>
-            Aplicar Overlay em Direto
-          </button>
+          <div style="display:flex; gap:12px; margin-top:24px;">
+            <button class="btn btn-primary" style="flex:2;justify-content:center;padding:14px;font-size: 1rem;"
+              onclick="saveBroadcast()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              Aplicar ao Direto (Manualmente)
+            </button>
+            <button class="btn btn-secondary" style="flex:1;justify-content:center;padding:14px;font-weight:600;border-color:var(--acc);color:#fff;"
+              onclick="saveAsScene()">
+              💾 + Guardar Nova Cena
+            </button>
+          </div>
 
-          <p style="margin-top:14px;font-size:0.76rem;color:var(--text-muted);line-height:1.65">
-            No OBS: adiciona uma fonte <strong style="color:var(--text)">Browser Source</strong> com o URL do overlay,
-            resolução <strong style="color:var(--text)">1920×1080</strong>, e activa a opção <strong
-              style="color:var(--text)">Transparent background</strong>. As alterações aplicam-se instantaneamente sem
-            reiniciar o OBS.
+          <p style="margin-top:16px;font-size:.8rem;color:var(--text-muted);line-height:1.65; text-align: center;">
+            No OBS, adiciona uma <strong style="color:var(--text)">Browser Source</strong> → URL: <strong
+              style="color:var(--text)">obs.html</strong> (1920×1080). Todas as alterações aplicam-se em milissegundos.
           </p>
         </div>
 
-        <!-- EVENTO -->
+        <!-- OPÇÕES ABRANGENTES DE EVENTO -->
         <div id="sec_event" class="section">
           <div class="page-header">
             <div>
-              <h1>Evento</h1>
-              <p>Informação geral do evento</p>
+              <h1>Configurações do Evento</h1>
+              <p>Campos estruturais que guiam a plataforma de Votação (index.html)</p>
             </div>
           </div>
+          
+          <div class="card" style="margin-bottom: 24px;">
+            <div class="card-title">Informação Pública</div>
+            <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.6;">
+              Estes campos são visíveis para qualquer espectador que aceda à página de votação via telemóvel. Usa texto cativante!
+            </p>
+            
+            <div class="form-group">
+              <label>Nome do Evento / Espetáculo</label>
+              <input type="text" id="f_title" placeholder="Ex: Grupo Armindo Awards 2025" style="font-size: 1.1rem; font-family: var(--font-serif);" />
+            </div>
+            
+            <div style="display: flex; gap: 15px;">
+              <div class="form-group" style="flex:1;">
+                <label>Subtítulo de Cartaz</label>
+                <input type="text" id="f_subtitle" placeholder="Ex: A Decisão do Público!" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Descrição Opcional</label>
+              <textarea id="f_description" rows="3" placeholder="Mensagem de boas-vindas aos votantes..." style="resize: vertical;"></textarea>
+            </div>
+            
+            <button class="btn btn-primary" style="margin-top: 10px; width: 100%; justify-content: center; padding: 12px;" onclick="saveEventInfo()">
+              Guardar Configurações
+            </button>
+          </div>
+
+          <!-- SYSTEM INFO & DANGER ZONE -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+            <div class="card">
+              <div class="card-title">Metadados de Sessão</div>
+              <div class="form-group">
+                <label>ID da Base de Dados (Leitura Restrita)</label>
+                <div style="display:flex; gap:10px;">
+                  <input type="text" id="f_sessionId" readonly style="font-family: 'JetBrains Mono', monospace; color: var(--accent); background: var(--surface2);" />
+                  <button class="btn btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('f_sessionId').value); showToast('ID Copiado');">Copiar</button>
+                </div>
+              </div>
+              <p style="font-size: 0.72rem; color: var(--text-muted); margin-top: 10px;">
+                As sessões separam os votos. Se registares votos na sessão A e abrires a sessão B, todos os teus eleitores votam do zero, sem destruir o histórico da sessão A. Podes forçar uma nova sessão no separador "Votação".
+              </p>
+            </div>
+            
+            <div class="card" style="border-color: rgba(220, 53, 69, 0.3); background: color-mix(in srgb, var(--danger) 5%, var(--surface));">
+              <div class="card-title" style="color: var(--danger);">Danger Zone</div>
+              <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5;">
+                Ações irreversíveis para limpar a base de dados.
+              </p>
+              <button class="btn btn-danger" style="width: 100%; justify-content: center; margin-bottom:8px;" onclick="if(confirm('Vai apagar TODAS as categorias e configurações desta conta! De certeza que pretendes fazer o Factory Reset?')) { set(ref(db, '/'), null); location.reload(); }">
+                ⚠️ Repor Padrões de Fábrica
+              </button>
+            </div>
+          </div>
+        <!-- CONFIGURAÇÕES DO EVENTO (END) -->
+        </div>
+
+        <!-- PORTAS-VOZ (SPOKESPERSONS) -->
+        <div id="sec_spokespersons" class="section">
+          <div class="page-header">
+            <div>
+              <h1>Gestão de Portas-Voz</h1>
+              <p>Define as pessoas que podem aparecer na câmara lateral (Spokespersons)</p>
+            </div>
+          </div>
+          
           <div class="card">
-            <div class="form-group"><label>Título</label><input type="text" id="f_title"
-                placeholder="ex: Grupo Armindo Awards 2025" /></div>
-            <div class="form-group"><label>Subtítulo</label><input type="text" id="f_subtitle"
-                placeholder="ex: O público escolhe!" /></div>
-            <div class="form-group"><label>Descrição</label><textarea id="f_description" rows="3"
-                placeholder="Breve descrição do evento…"></textarea></div>
-            <div class="form-group"><label>ID da Sessão (só leitura)</label><input type="text" id="f_sessionId" readonly
-                placeholder="Gera uma sessão no separador Votação" /></div>
-            <button class="btn btn-primary" onclick="saveEventInfo()">Guardar</button>
+            <div class="card-title">Adicionar Novo Porta-Voz</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:12px; align-items: flex-end;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label>Nome Completo</label>
+                <input type="text" id="spoke_new_name" placeholder="Ex: Ricardo Armindo" />
+              </div>
+              <div class="form-group" style="margin-bottom:0;">
+                <label>Cargo / Função</label>
+                <input type="text" id="spoke_new_role" placeholder="Ex: Diretor do Evento" />
+              </div>
+              <button class="btn btn-primary" onclick="addSpokesperson()">Adicionar</button>
+            </div>
+          </div>
+
+          <div id="spokes_grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:16px;">
+            <!-- Rendered by JS -->
           </div>
         </div>
 

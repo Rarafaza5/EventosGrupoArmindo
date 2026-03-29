@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>ORACLE DECK v7.0 — Button Master Edition</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Jost:wght@400;600;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --acc: #c4973a;
+            --acc-glow: rgba(196, 151, 58, 0.3);
+            --bg: #030207;
+            --surface: #0a0914;
+            --text: #f5f2eb;
+            --text-muted: #4a4a55;
+            --danger: #ff4757;
+            --success: #2ed573;
+            --border: rgba(255,255,255,0.05);
+        }
+
+        body {
+            margin: 0; padding: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Jost', sans-serif;
+            overflow: hidden;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 1.5s ease;
+        }
+
+        /* ORACLE HUD (Top Bar) */
+        .oracle-hud {
+            height: 65px;
+            background: rgba(0,0,0,0.9);
+            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 25px; z-index: 1000; position: relative;
+        }
+        .analytix { display: flex; align-items: flex-end; gap: 3px; height: 26px; }
+        .analytix-bar { width: 10px; background: var(--border); border-radius: 1px; transition: height 0.6s cubic-bezier(0.19, 1, 0.22, 1); height: 10%; }
+        .analytix-bar.active { background: var(--acc); box-shadow: 0 0 12px var(--acc-glow); }
+
+        .system-status { font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--text-muted); display: flex; gap: 20px; }
+        .status-pill { display: flex; align-items: center; gap: 5px; }
+        .status-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted); }
+        .status-dot.active { background: var(--success); box-shadow: 0 0 10px var(--success); animation: pulse 2s infinite; }
+
+        .shell {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            height: calc(100vh - 65px);
+        }
+
+        /* MASTER COMMAND SIDEBAR (Left) */
+        .command-bar {
+            background: rgba(5, 4, 10, 1);
+            border-right: 1px solid var(--border);
+            display: flex; flex-direction: column;
+            padding: 18px; gap: 15px;
+            box-shadow: 10px 0 40px rgba(0,0,0,0.6);
+            z-index: 100;
+        }
+        .bar-title { font-family: 'Cinzel', serif; font-size: 0.55rem; color: var(--acc); letter-spacing: 0.2em; text-align: center; opacity: 0.7; margin-bottom: 4px; }
+
+        .btn-reveal-elite {
+            flex: 2.8;
+            background: linear-gradient(135deg, var(--acc), #fff);
+            border-radius: 28px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: #000; cursor: pointer; transition: all 0.1s;
+            box-shadow: 0 15px 45px rgba(196, 151, 58, 0.15), inset 0 2px 4px rgba(255,255,255,0.6);
+            padding: 15px; text-align: center; border: none;
+        }
+        .btn-reveal-elite:active { transform: scale(0.94); filter: brightness(1.3); }
+        .btn-reveal-elite .icon { font-size: 2.8rem; margin-bottom: 6px; }
+        .btn-reveal-elite .label { font-size: 0.6rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.7; }
+        .btn-reveal-elite .name { font-size: 1rem; font-weight: 900; margin-top: 5px; line-height: 1.1; }
+
+        .btn-tool {
+            flex: 1;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            cursor: pointer; transition: all 0.2s; position: relative;
+        }
+        .btn-tool:active { transform: scale(0.96); background: rgba(255,255,255,0.06); }
+        .btn-tool.active { border-color: var(--acc); background: rgba(196,151,58,0.1); }
+        .btn-tool.active .icon { color: var(--acc); filter: drop-shadow(0 0 10px var(--acc-glow)); }
+        .btn-tool .icon { font-size: 1.5rem; margin-bottom: 4px; color: var(--text-muted); }
+        .btn-tool .label { font-size: 0.55rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted); }
+        .btn-tool .led { position: absolute; top: 12px; right: 12px; width: 4px; height: 4px; border-radius: 50%; background: #222; }
+        .btn-tool.active .led { background: var(--acc); box-shadow: 0 0 8px var(--acc); }
+
+        /* RIGHT DYNAMIC DASHBOARD */
+        .dashboard-area { display: flex; flex-direction: column; background: transparent; position: relative; overflow: hidden; }
+        #auroraCanvas { position: absolute; inset: 0; opacity: 0.2; pointer-events: none; }
+
+        .tab-content { flex: 1; padding: 25px; overflow-y: auto; display: none; position: relative; z-index: 10; }
+        .tab-content.active { display: block; }
+        .tab-content::-webkit-scrollbar { width: 0; }
+
+        .tab-nav {
+            height: 90px;
+            background: rgba(0,0,0,0.95);
+            border-top: 1px solid var(--border);
+            display: flex; gap: 2px; z-index: 20;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0.25; transition: all 0.3s; }
+        .nav-item.active { opacity: 1; color: var(--acc); }
+        .nav-item .icon { font-size: 1.6rem; margin-bottom: 4px; }
+        .nav-item .label { font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; }
+
+        /* GRID COMPONENTS */
+        .grid-scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 15px; }
+        .btn-scene {
+            background: rgba(10, 9, 20, 0.7); backdrop-filter: blur(15px);
+            border: 1px solid var(--border); border-radius: 20px; padding: 22px 15px;
+            text-align: center; cursor: pointer; transition: all 0.2s; position: relative;
+        }
+        .btn-scene:active { transform: scale(0.96); }
+        .btn-scene.active { border-color: var(--acc); box-shadow: 0 0 25px var(--acc-glow); }
+        .btn-scene .icon { font-size: 2.2rem; margin-bottom: 8px; filter: grayscale(0.2); }
+        .btn-scene .label { font-size: 0.7rem; font-weight: 800; color: #fff; text-transform: uppercase; }
+        .btn-scene .led { position: absolute; top: 12px; right: 12px; width: 6px; height: 6px; border-radius: 50%; background: #222; }
+        .btn-scene.active .led { background: var(--acc); box-shadow: 0 0 10px var(--acc); }
+
+        .mixer-section { margin-bottom: 35px; }
+        .mixer-header { font-size: 0.58rem; color: var(--text-muted); font-weight: 800; letter-spacing: 0.25em; text-transform: uppercase; margin-bottom: 15px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+        .strip-btns { display: grid; grid-template-columns: repeat(auto-fill, minmax(105px, 1fr)); gap: 10px; }
+        .btn-strip {
+            background: rgba(255,255,255,0.02); border: 1px solid var(--border); padding: 18px 5px;
+            border-radius: 15px; font-size: 0.62rem; font-weight: 900; color: var(--text-muted);
+            text-align: center; cursor: pointer; text-transform: uppercase; transition: all 0.2s;
+        }
+        .btn-strip.active { background: var(--acc); color: #000; border-color: var(--acc); box-shadow: 0 5px 20px var(--acc-glow); }
+
+        .item-cat {
+            background: rgba(255,255,255,0.01); border: 1px solid var(--border);
+            border-radius: 18px; padding: 22px; margin-bottom: 12px;
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.9rem; font-weight: 800; cursor: pointer; transition: all 0.3s;
+        }
+        .item-cat.active { border-color: var(--acc); background: rgba(196, 151, 58, 0.08); color: var(--acc); padding-left: 35px; }
+
+        /* SAFETY & MACRO */
+        .btn-macro {
+            background: rgba(196, 151, 58, 0.1); border: 1px solid var(--acc);
+            color: var(--acc); border-radius: 24px; padding: 35px 20px;
+            text-align: center; font-weight: 900; font-size: 1.1rem; cursor: pointer;
+            margin-bottom: 25px; transition: all 0.2s;
+        }
+        .btn-macro:active { transform: scale(0.96); filter: brightness(1.2); }
+        
+        .btn-panic {
+            background: rgba(255, 71, 87, 0.04); border: 1px solid rgba(255, 71, 87, 0.2);
+            color: var(--danger); border-radius: 20px; padding: 30px; text-align: center;
+            font-weight: 900; font-size: 0.9rem; cursor: pointer; position: relative; overflow: hidden;
+        }
+        .panic-bar { position: absolute; left: 0; bottom: 0; height: 6px; background: var(--danger); width: 0%; transition: width 0.1s linear; }
+
+        #toast {
+            position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%) translateY(50px);
+            background: var(--acc); color: #000; padding: 12px 35px; border-radius: 40px;
+            font-weight: 950; text-transform: uppercase; font-size: 0.9rem; opacity: 0; transition: all 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28); z-index: 5000;
+        }
+        #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+        @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div class="oracle-hud">
+        <div class="hud-l">
+            <div class="system-status">
+                <div class="status-pill">
+                    <div id="sync_led" class="status-dot"></div>
+                    <span id="sync_txt">OFFLINE</span>
+                </div>
+                <div class="status-pill" style="color:var(--acc);">
+                    <span>LIVE VOTE: <span id="hud_votes">0</span></span>
+                </div>
+            </div>
+        </div>
+        <div class="analytix" id="hud_bars">
+            <!-- Analytics generated by JS -->
+        </div>
+        <div class="hud-r">
+            <span id="hud_time" style="font-family:'JetBrains Mono'; font-weight:900; font-size:1.1rem; color:#fff;">00:00:00</span>
+        </div>
+    </div>
+
+    <div class="shell">
+        <!-- COMMAND SIDEBAR -->
+        <div class="command-bar">
+            <div class="bar-title">Master Control</div>
+            <div class="btn-reveal-elite" onclick="bcRevealNext()">
+                <div class="icon">⚡</div>
+                <div class="label">Revelar Próximo</div>
+                <div id="reveal_name" class="name">---</div>
+            </div>
+            
+            <div style="display:flex; gap:12px; height: 80px;">
+                <div class="btn-tool" onclick="bcRevealBack()">
+                    <div class="led"></div>
+                    <div class="icon">⬅️</div>
+                    <div class="label">Voltar</div>
+                </div>
+                <div id="tool_suspense" class="btn-tool" onclick="toggleBC('suspense')">
+                    <div class="led"></div>
+                    <div class="icon">🔥</div>
+                    <div class="label">Suspense</div>
+                </div>
+            </div>
+
+            <div class="btn-tool" onclick="triggerVfx('confetti')" style="height:70px; border-color:var(--acc-glow);">
+                <div class="led"></div>
+                <div class="icon" style="color:var(--acc);">🎉</div>
+                <div class="label" style="columns: var(--acc);">Confetti</div>
+            </div>
+
+            <div style="margin-top:auto; font-size:0.5rem; text-align:center; color:var(--text-muted); letter-spacing:0.3em; font-weight:800;">ELITE CONSOLE v7.0</div>
+        </div>
+
+        <!-- DASHBOARD AREA -->
+        <div class="dashboard-area">
+            <canvas id="auroraCanvas"></canvas>
+            
+            <div id="tab_scenes" class="tab-content active">
+                <div class="grid-scenes" id="scenesGrid"></div>
+            </div>
+
+            <div id="tab_cats" class="tab-content">
+                <div id="catsGrid"></div>
+            </div>
+
+            <div id="tab_mixer" class="tab-content">
+                <div class="mixer-section">
+                    <div class="mixer-header">Broadcast Spatial Engine</div>
+                    <div class="strip-btns">
+                        <div id="lay_split" class="btn-strip" onclick="setBC('layout', 'split')">Split</div>
+                        <div id="lay_full" class="btn-strip" onclick="setBC('layout', 'full')">Full</div>
+                        <div id="lay_line" class="btn-strip" onclick="setBC('layout', 'line')">Line</div>
+                        <div id="lay_grid" class="btn-strip" onclick="setBC('layout', 'grid')">Grid</div>
+                    </div>
+                </div>
+                <div class="mixer-section">
+                    <div class="mixer-header">Row Component Styling</div>
+                    <div class="strip-btns">
+                        <div id="row_card" class="btn-strip" onclick="setBC('rowStyle', 'card')">Card</div>
+                        <div id="row_line" class="btn-strip" onclick="setBC('rowStyle', 'line')">Line</div>
+                        <div id="row_flag" class="btn-strip" onclick="setBC('rowStyle', 'flag')">Flag</div>
+                    </div>
+                </div>
+                <div class="mixer-section">
+                    <div class="mixer-header">Visibility Toggles (Overlays)</div>
+                    <div class="strip-btns" style="grid-template-columns: 1fr 1fr;">
+                        <div id="tg_photos" class="btn-strip" onclick="toggleBC('showPhotos')">Photos</div>
+                        <div id="tg_bars" class="btn-strip" onclick="toggleBC('showBars')">Bars</div>
+                        <div id="tg_pct" class="btn-strip" onclick="toggleBC('showPct')">Percent.</div>
+                        <div id="tg_count" class="btn-strip" onclick="toggleBC('showCount')">Votos Abs.</div>
+                        <div id="tg_live" class="btn-strip" onclick="toggleBC('showLiveVotes')">Live Social</div>
+                        <div id="tg_clock" class="btn-strip" onclick="toggleBC('showClock')">Clock</div>
+                        <div id="tg_status" class="btn-strip" onclick="toggleBC('showStatus')">Status Tag</div>
+                        <div id="tg_cam" class="btn-strip" onclick="toggleBC('showSpokesperson')">Spoke Cam</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab_vfx" class="tab-content">
+                <div class="mixer-header">Production Macros</div>
+                <div class="btn-macro" onclick="triggerVfx('winner')">
+                    🏆 TRIGGER WINNER REVEAL 🏆
+                </div>
+                
+                <div class="btn-panic" id="panicBtn">
+                    END BROADCAST (PRESS AND HOLD)
+                    <div class="panic-bar" id="panicProg"></div>
+                </div>
+
+                <div class="mixer-section" style="margin-top:50px;">
+                    <div class="mixer-header">Session Manager</div>
+                    <div class="item-cat" onclick="toggleConfig('votingOpen')" style="font-size:1rem; padding:25px;">
+                        <span>REAL-TIME VOTING</span>
+                        <div id="vote_status_tag" style="background:var(--danger); color:#fff; padding:4px 12px; border-radius:10px; font-size:0.6rem;">FECHADO</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab_spokes" class="tab-content">
+                <div class="mixer-header" style="margin-bottom:20px;">Seletor de Porta-Voz (Live)</div>
+                <div id="spokesGrid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:15px;">
+                    <!-- Rendered by JS -->
+                </div>
+            </div>
+
+            <!-- TAB NAV -->
+            <div class="tab-nav">
+                <div class="nav-item active" onclick="showTab('scenes')">
+                    <div class="icon">🎬</div>
+                    <div class="label">Scenes</div>
+                </div>
+                <div class="nav-item" onclick="showTab('cats')">
+                    <div class="icon">📁</div>
+                    <div class="label">Cats</div>
+                </div>
+                <div class="nav-item" onclick="showTab('mixer')">
+                    <div class="icon">⚙️</div>
+                    <div class="label">Mixer</div>
+                </div>
+                <div class="nav-item" onclick="showTab('vfx')">
+                    <div class="icon">✨</div>
+                    <div class="label">VFX</div>
+                </div>
+                <div class="nav-item" onclick="showTab('spokes')">
+                    <div class="icon">🗣️</div>
+                    <div class="label">Spokes</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast">Command Executed</div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getDatabase, ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik",
+            authDomain: "aawards.firebaseapp.com",
+            databaseURL: "https://aawards-default-rtdb.firebaseio.com",
+            projectId: "aawards",
+            storageBucket: "aawards.firebasestorage.app",
+            messagingSenderId: "839334918366",
+            appId: "1:839334918366:web:454a259fa3e2665b46ea4f"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        let cfg = {}; let vts = {}; let scns = {};
+
+        function haptic(p=45) { if(window.navigator.vibrate) window.navigator.vibrate(p); }
+        function showToast(m) { const t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2000); }
+
+        window.showTab = (n) => {
+            haptic(15);
+            document.querySelectorAll('.tab-content').forEach(el=>el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
+            document.getElementById('tab_'+n).classList.add('active');
+            const navs = document.querySelectorAll('.nav-item');
+            const i = n==='scenes'?0 : n==='cats'?1 : n==='mixer'?2 : n==='vfx'?3 : 4;
+            navs[i].classList.add('active');
+        };
+
+        // FIREBASE SYNC
+        onValue(ref(db, 'config'), snap => {
+            cfg = snap.val() || {};
+            updateUI();
+            renderScenes();
+            renderCats();
+            renderSpokespersons();
+            document.getElementById('sync_led').className = 'status-dot active';
+            document.getElementById('sync_txt').textContent = 'CORE SYNC OK';
+        });
+
+        onValue(ref(db, 'sessions'), snap => {
+            vts = snap.val() || {};
+            updateAnalytics();
+        });
+
+        setInterval(()=> {
+            document.getElementById('hud_time').textContent = new Date().toLocaleTimeString('pt-PT', {hour12:false});
+        }, 1000);
+
+        function updateUI() {
+            const bc = cfg.broadcast || {};
+            // Theme Sync
+            const t = cfg.theme || {};
+            document.documentElement.style.setProperty('--acc', t.accent || '#c4973a');
+            document.documentElement.style.setProperty('--acc-glow', (t.accent || '#c4973a') + '55');
+
+            // Strip Items
+            document.querySelectorAll('.btn-strip').forEach(el=>el.classList.remove('active'));
+            ['lay_'+(bc.layout||'split'), 'row_'+(bc.rowStyle||'card')].forEach(id=>{
+                const el = document.getElementById(id); if(el) el.classList.add('active');
+            });
+            // Toggles
+            const stg = (id, f) => {
+                const el = document.getElementById(id); if(el) el.classList.toggle('active', bc['show'+f] !== false);
+            };
+            ['Photos','Bars','Pct','Count','LiveVotes','Clock','Status','Spokesperson'].forEach(f=>stg('tg_'+f.toLowerCase().replace('livevotes','live').replace('spokesperson','cam'), f));
+            
+            document.getElementById('tool_suspense').classList.toggle('active', !!bc.suspense);
+            document.getElementById('vote_status_tag').textContent = cfg.votingOpen ? 'ABERTO' : 'FECHADO';
+            document.getElementById('vote_status_tag').style.background = cfg.votingOpen ? 'var(--success)' : 'var(--danger)';
+            
+            // Intelligence
+            const cats = cfg.categories || [];
+            const cat = cats.find(c=>c.id === bc.catId) || cats[0];
+            if (cat) {
+                const revs = bc.revealed ?? 0;
+                const cands = (cat.candidates || []).slice().reverse();
+                document.getElementById('reveal_name').textContent = revs < cands.length ? cands[revs].name : 'LISTA COMPLETA';
+            }
+        }
+
+        function updateAnalytics() {
+            const bc = cfg.broadcast || {};
+            const cats = cfg.categories || [];
+            const cat = cats.find(c=>c.id === bc.catId) || cats[0];
+            if (!cat) return;
+            const cands = cat.candidates || [];
+            const counts = cands.map(c=>{
+                let cnt = 0; Object.values(vts).forEach(v=>{ if(v.category_id===cat.id && v.candidate_id===c.id) cnt++; });
+                return { cnt };
+            }).sort((a,b)=>b.cnt - a.cnt);
+            const tot = counts.reduce((a,b)=>a+b.cnt, 0);
+            document.getElementById('hud_votes').textContent = tot;
+            const h = document.getElementById('hud_bars'); h.innerHTML = '';
+            counts.slice(0, 8).forEach((c, i)=>{
+                const b = document.createElement('div'); b.className = 'analytix-bar' + (i===0?' active':'');
+                const pct = tot > 0 ? (c.cnt/tot * 100) : 0;
+                b.style.height = Math.max(10, pct) + '%'; h.appendChild(b);
+            });
+        }
+
+        window.setBC = async (f, v) => { haptic(20); await update(ref(db, 'config/broadcast'), {[f]:v}); showToast(`Sincronizado: ${v.toUpperCase()}`); };
+        window.toggleBC = async (f) => { haptic(30); const v = cfg.broadcast?.[f] === undefined ? false : !cfg.broadcast[f]; await update(ref(db, 'config/broadcast'), {[f]:v}); showToast(`${f.toUpperCase()}: ${v?'ON':'OFF'}`); };
+        window.toggleConfig = async (f) => { haptic(40); const v = !cfg[f]; await update(ref(db, 'config'), {[f]:v}); showToast(`VOTAÇÃO: ${v?'ABERTA':'FECHADA'}`); };
+
+        function renderCats() {
+            const g = document.getElementById('catsGrid'); if(!g || !cfg.categories) return; g.innerHTML = '';
+            const activeId = cfg.broadcast?.catId || cfg.categories[0]?.id;
+            cfg.categories.forEach(c=>{
+                const card = document.createElement('div'); card.className = 'item-cat' + (c.id === activeId ? ' active' : '');
+                card.innerHTML = `<span>${c.name}</span> ${c.id === activeId ? '<span>◈</span>' : ''}`;
+                card.onclick = () => { haptic([30,15]); update(ref(db, 'config/broadcast'), {catId:c.id, revealed: 0}); };
+                g.appendChild(card);
+            });
+        }
+
+        function renderScenes() {
+            const g = document.getElementById('scenesGrid'); if(!g || !cfg.scenes) return; g.innerHTML = '';
+            scns = cfg.scenes;
+            Object.keys(scns).forEach(k=>{
+                const s = scns[k]; const btn = document.createElement('div');
+                btn.className = 'btn-scene' + (cfg.broadcast?.name === s.name ? ' active' : '');
+                btn.innerHTML = `<div class="led"></div><div class="icon">${s.cleanMode===false?'📺':'🎬'}</div><div class="label">${s.name}</div>`;
+                btn.onclick = () => { haptic([20,90]); set(ref(db, 'config/broadcast'), {...scns[k]}); };
+                g.appendChild(btn);
+            });
+        }
+
+        window.triggerVfx = async (t) => { haptic([50, 150, 50]); await set(ref(db, 'config/broadcast/trigger_'+t), Date.now()); showToast('VFX EXECUTADO'); };
+        window.bcRevealNext = async () => {
+            haptic([15, 65]); const bc = cfg.broadcast || {}; const cats = cfg.categories || [];
+            const cat = cats.find(c=>c.id === bc.catId) || cats[0]; if(!cat) return;
+            const cur = bc.revealed ?? 0; if (cur < (cat.candidates || []).length) update(ref(db, 'config/broadcast'), {revealed: cur + 1});
+        };
+        window.bcRevealBack = async () => { haptic(40); const cur = cfg.broadcast?.revealed ?? 0; if (cur > 0) update(ref(db, 'config/broadcast'), {revealed: cur - 1}); };
+
+        function renderSpokespersons() {
+            const grid = document.getElementById('spokesGrid'); if(!grid) return; grid.innerHTML = '';
+            const list = cfg.spokespersons || {};
+            const keys = Object.keys(list);
+            
+            if(keys.length === 0) {
+                grid.innerHTML = '<div style="grid-column:1/-1; color:var(--text-muted); text-align:center; padding:40px; font-style:italic;">Sem porta-vozes. Configura no Admin.</div>';
+                return;
+            }
+
+            keys.forEach(k => {
+                const p = list[k];
+                const btn = document.createElement('div');
+                const isActive = cfg.broadcast?.spokespersonName === p.name;
+                btn.className = 'btn-scene' + (isActive ? ' active' : '');
+                btn.innerHTML = `
+                    <div class="led"></div>
+                    <div class="icon">👤</div>
+                    <div class="label" style="font-size:0.6rem;">${p.name}</div>
+                    <div style="font-size:0.45rem; opacity:0.5; margin-top:2px;">${p.role}</div>
+                `;
+                btn.onclick = () => activateSpoke(p.name, p.role);
+                grid.appendChild(btn);
+            });
+        }
+
+        async function activateSpoke(name, role) {
+            haptic([15, 80]);
+            await update(ref(db, 'config/broadcast'), {
+                spokespersonName: name,
+                spokespersonRole: role,
+                showSpokesperson: true
+            });
+            showToast('Porta-Voz Ativado: ' + name);
+        }
+
+        // PANIC BUTTON
+        let panicT = null; const pBtn = document.getElementById('panicBtn'); const pProg = document.getElementById('panicProg');
+        pBtn.addEventListener('touchstart', (e)=>{ e.preventDefault(); haptic(100); pProg.style.transition='width 1.5s linear'; pProg.style.width='100%'; panicT = setTimeout(()=>{ triggerVfx('closed'); pProg.style.width='0%'; haptic([100,200,100]); }, 1500); });
+        pBtn.addEventListener('touchend', ()=>{ clearTimeout(panicT); pProg.style.transition='none'; pProg.style.width='0%'; });
+
+        // AURORA
+        const c = document.getElementById('auroraCanvas'); const ctx = c.getContext('2d');
+        c.width = window.innerWidth; c.height = window.innerHeight;
+        let t = 0;
+        function loop() {
+            t += 0.006; ctx.clearRect(0,0,c.width,c.height);
+            const acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim();
+            ctx.fillStyle = acc; ctx.globalAlpha = 0.06;
+            for(let i=0; i<3; i++) {
+                const y = c.height/2 + Math.sin(t + i) * 60;
+                ctx.beginPath(); ctx.moveTo(0, y);
+                for(let x=0; x<c.width; x+=15) { ctx.lineTo(x, y + Math.sin(x*0.008 + t)*40); }
+                ctx.lineTo(c.width, c.height); ctx.lineTo(0, c.height); ctx.fill();
+            }
+            requestAnimationFrame(loop);
+        }
+        loop();
+    </script>
+</body>
+</html>
