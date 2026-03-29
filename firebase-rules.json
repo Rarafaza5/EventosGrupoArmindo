@@ -1,0 +1,26 @@
+{
+  "rules": {
+    "config": {
+      ".read": true,
+      ".write": false
+    },
+    "sessions": {
+      "$sessionId": {
+        "votes": {
+          "$voterId": {
+            ".read": "auth == null || auth.uid == $voterId",
+            ".write": "!data.exists()",
+            ".validate": "newData.hasChildren()"
+          }
+        },
+        "$catKey": {
+          "$candidateId": {
+            ".read": true,
+            ".write": "!data.exists() || newData.isNumber()",
+            ".validate": "newData.isNumber() && newData.val() == (data.exists() ? data.val() + 1 : 1)"
+          }
+        }
+      }
+    }
+  }
+}

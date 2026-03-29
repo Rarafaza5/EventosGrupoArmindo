@@ -4,15 +4,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#07060e" />
+  <meta name="description" content="Votação ao vivo — Grupo Armindo. Vota no teu favorito em tempo real." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Votação — Grupo Armindo</title>
+  <link rel="manifest" href="/manifest.json" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link
     href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;900&family=Jost:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&display=swap"
     rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getDatabase, ref, onValue, set, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    import { getDatabase, ref, onValue, set, get, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik",
@@ -34,6 +40,39 @@
     let initialized = false;
     let activeCatIndex = 0; // currently visible category tab
 
+    let voterId = localStorage.getItem('ga_voterId') || crypto.randomUUID();
+    localStorage.setItem('ga_voterId', voterId);
+    let hasSubmitted = false;
+    let voterSelections = {}; // { catId: candidateId }
+    let isOnline = true;
+
+    // Connection monitoring
+    function setOnlineStatus(ok) {
+      isOnline = ok;
+      const badge = document.getElementById('connBadge');
+      if (!badge) return;
+      if (ok) {
+        badge.classList.remove('err');
+        badge.style.display = 'none';
+      } else {
+        badge.classList.add('err');
+        badge.style.display = 'flex';
+      }
+    }
+    window.addEventListener('online', () => setOnlineStatus(true));
+    window.addEventListener('offline', () => setOnlineStatus(false));
+
+    // Cinematic intro
+    function playIntro() {
+      const intro = document.getElementById('introOverlay');
+      if (!intro) return;
+      // Short delay then fade out
+      setTimeout(() => {
+        intro.classList.add('out');
+        setTimeout(() => { intro.style.display = 'none'; }, 900);
+      }, 2200);
+    }
+
     // Per-category vote tracking
     function getVoteKey(sessionId, catId) { return `ga_voted_${sessionId}_${catId}`; }
     function getVotedForCat(sessionId, catId) { return localStorage.getItem(getVoteKey(sessionId, catId)); }
@@ -41,6 +80,46 @@
     function hasVotedInCat(sessionId, catId) { return !!getVotedForCat(sessionId, catId); }
     function allCatsVoted(sessionId, cats) { return cats.every(c => hasVotedInCat(sessionId, c.id)); }
     function countVotedCats(sessionId, cats) { return cats.filter(c => hasVotedInCat(sessionId, c.id)).length; }
+
+    function loadVoterSelections() {
+      if (!currentSessionId) return;
+      voterSelections = {};
+      categories.forEach(cat => {
+        const saved = localStorage.getItem(`ga_selected_${currentSessionId}_${cat.id}`);
+        if (saved) voterSelections[cat.id] = saved;
+      });
+    }
+
+    function saveVoterSelection(catId, candidateId) {
+      if (!currentSessionId) return;
+      voterSelections[catId] = candidateId;
+      localStorage.setItem(`ga_selected_${currentSessionId}_${catId}`, candidateId);
+    }
+
+    function clearVoterSelection() {
+      if (!currentSessionId) return;
+      categories.forEach(cat => {
+        localStorage.removeItem(`ga_selected_${currentSessionId}_${cat.id}`);
+      });
+      voterSelections = {};
+    }
+
+    function hasAllSelections() {
+      return categories.length > 0 && categories.every(cat => voterSelections[cat.id]);
+    }
+
+    function updateSubmitState() {
+      const submitBtn = document.getElementById('submitVoteBtn');
+      if (!submitBtn) return;
+      submitBtn.disabled = !votingOpen || hasSubmitted || !hasAllSelections();
+      submitBtn.style.opacity = submitBtn.disabled ? '0.55' : '1';
+      const hint = document.getElementById('submitHint');
+      if (hint) {
+        hint.textContent = hasSubmitted
+          ? 'Voto já registado. Obrigado pela participação.'
+          : (!votingOpen ? 'Votação fechada' : (hasAllSelections() ? 'Pronto para submeter o teu voto final' : 'Seleciona uma opção em todas as categorias antes de submeter.'));
+      }
+    }
 
     function applyTheme(theme) {
       if (!theme) return;
@@ -134,11 +213,14 @@
         return;
       }
       grid.innerHTML = '';
+      const cat = categories[activeCatIndex];
+      const selectedCatId = voterSelections[cat?.id];
+      const alreadyVoted = hasSubmitted || hasVotedInCat(currentSessionId, cat.id);
+
       candidates.forEach((c, i) => {
-        const isVoted = votedId === c.id;
-        const alreadyVoted = !!votedId;
+        const isSelected = selectedCatId === c.id;
         const card = document.createElement('div');
-        card.className = 'card' + (isVoted ? ' card--voted' : '') + (alreadyVoted && !isVoted ? ' card--dimmed' : '');
+        card.className = `card ${isSelected ? 'card--voted' : ''} ${alreadyVoted && !isSelected ? 'card--dimmed' : ''}`.trim();
         card.style.setProperty('--delay', i * 0.08 + 's');
         card.innerHTML = `
           <div class="card__inner">
@@ -146,7 +228,7 @@
             <div class="card__photo-wrap">
               ${c.photo ? `<img src="${c.photo}" alt="${c.name}" class="card__photo"/>` : `<div class="card__photo-placeholder">${c.name.charAt(0).toUpperCase()}</div>`}
               <div class="card__photo-overlay"></div>
-              ${isVoted ? `<div class="card__voted-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>` : ''}
+              ${isSelected ? `<div class="card__voted-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>` : ''}
             </div>
             <div class="card__body">
               <div class="card__name">${c.name}</div>
@@ -154,27 +236,29 @@
               ${c.description ? `<div class="card__desc">${c.description}</div>` : ''}
             </div>
             <div class="card__footer">
-              ${!alreadyVoted
-            ? `<button class="vote-btn" data-id="${c.id}" data-name="${c.name}">
+              ${alreadyVoted
+                ? isSelected
+                  ? `<div class="voted-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg><span>${hasSubmitted ? 'Voto submetido' : 'O teu voto'}</span></div>`
+                  : `<div class="voted-other-pill"></div>`
+                : `<button class="vote-btn" data-id="${c.id}" data-name="${c.name}">
                     <span class="vote-btn__bg"></span>
-                    <span class="vote-btn__label">Votar</span>
+                    <span class="vote-btn__label">${isSelected ? 'Selecionado' : 'Escolher'}</span>
                     <span class="vote-btn__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg></span>
-                   </button>`
-            : isVoted
-              ? `<div class="voted-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg><span>O teu voto</span></div>`
-              : `<div class="voted-other-pill"></div>`
-          }
+                   </button>`}
             </div>
           </div>
           <div class="card__shine"></div>
         `;
+
         if (!alreadyVoted) {
-          card.querySelector('.vote-btn').addEventListener('click', () => castVote(c.id, c.name));
+          const btn = card.querySelector('.vote-btn');
+          if (btn) btn.addEventListener('click', () => castVote(cat.id, c.id, c.name));
         }
         card.addEventListener('mousemove', handleCardTilt);
         card.addEventListener('mouseleave', resetCardTilt);
         grid.appendChild(card);
       });
+      updateSubmitState();
     }
 
     function handleCardTilt(e) {
@@ -197,40 +281,91 @@
       if (shine) shine.style.opacity = '0';
     }
 
-    async function castVote(id, name) {
-      const cat = categories[activeCatIndex];
-      if (!cat || hasVotedInCat(currentSessionId, cat.id) || !votingOpen || !currentSessionId) return;
-      document.getElementById('confirmName').textContent = name;
-      document.getElementById('confirmCatName').textContent = categories.length > 1 ? `Categoria: ${cat.name}` : '';
-      openModal('confirmModal');
-      document.getElementById('confirmYes').onclick = async () => {
-        closeModal('confirmModal');
-        setVotedForCat(currentSessionId, cat.id, id);
-        const vRef = ref(db, `sessions/${currentSessionId}/cat_${cat.id}/${id}`);
-        const snap = await get(vRef);
-        await set(vRef, (snap.exists() ? snap.val() : 0) + 1);
-        const votedId = getVotedForCat(currentSessionId, cat.id);
-        renderCandidates(cat.candidates || [], votedId);
-        renderCategoryTabs();
-        updateProgressBar();
-        showVoteSuccess(name, cat.name);
+    function setVotingButtonsEnabled(enabled) {
+      document.querySelectorAll('.vote-btn').forEach(btn => {
+        btn.disabled = !enabled;
+        btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+        btn.style.opacity = enabled ? '1' : '0.55';
+      });
+    }
 
-        // Auto-advance to next unvoted category after 2s
-        if (categories.length > 1) {
-          setTimeout(() => {
-            const nextUnvoted = categories.findIndex((c, idx) => idx !== activeCatIndex && !hasVotedInCat(currentSessionId, c.id));
-            if (nextUnvoted >= 0) {
-              switchCategory(nextUnvoted);
-            } else if (allCatsVoted(currentSessionId, categories)) {
-              setTimeout(() => showClosedScreen(currentConfig.title, 'voted'), 1000);
-            }
-          }, 2200);
-        } else {
-          // Single category — show voted screen
-          setTimeout(() => showClosedScreen(currentConfig.title, 'voted'), 2200);
-        }
-      };
-      document.getElementById('confirmNo').onclick = () => closeModal('confirmModal');
+    async function castVote(catId, candidateId, candidateName) {
+      if (!votingOpen || !currentSessionId || hasSubmitted) {
+        showToast('⛔ Votação indisponível ou já submetida.', 'warn');
+        return;
+      }
+      const cat = categories.find(c => c.id === catId);
+      if (!cat) return;
+      // Haptic feedback on mobile
+      if (navigator.vibrate) navigator.vibrate([8, 30, 8]);
+      saveVoterSelection(catId, candidateId);
+      showToast(`✔️ Selecionado <strong>${candidateName}</strong> em ${cat.name}`, 'success');
+      renderCandidates(cat.candidates || []);
+      renderCategoryTabs();
+      updateProgressBar();
+      updateSubmitState();
+      // Auto-advance to next unvoted category
+      const nextUnvoted = categories.findIndex(c => !voterSelections[c.id]);
+      if (nextUnvoted >= 0 && nextUnvoted !== activeCatIndex) {
+        setTimeout(() => switchCategory(nextUnvoted), 600);
+      }
+    }
+
+    async function submitVote() {
+      if (!votingOpen || hasSubmitted || !currentSessionId) {
+        showToast('⛔ Não é possível submeter agora.');
+        return;
+      }
+      if (!hasAllSelections()) {
+        showToast('⚠️ Seleciona uma opção por categoria antes de submeter.');
+        return;
+      }
+
+      // Longer haptic for submit
+      if (navigator.vibrate) navigator.vibrate([15, 40, 15, 40, 30]);
+
+      const votePath = `sessions/${currentSessionId}/votes/${voterId}`;
+      const voteRef = ref(db, votePath);
+      const transactionResult = await runTransaction(voteRef, current => {
+        if (current) return; // já votado
+        return { ...voterSelections };
+      });
+
+      if (!transactionResult.committed) {
+        hasSubmitted = true;
+        showClosedScreen(currentConfig?.title || 'Votação', 'voted');
+        showToast('⚠️ Já existe um voto registado para o teu navegador.');
+        return;
+      }
+
+      // Increment totals por candidato
+      for (const [catKey, candId] of Object.entries(voterSelections)) {
+        const countRef = ref(db, `sessions/${currentSessionId}/cat_${catKey}/${candId}`);
+        await runTransaction(countRef, current => (current || 0) + 1);
+        setVotedForCat(currentSessionId, catKey, candId);
+      }
+
+      hasSubmitted = true;
+
+      // 🎉 Confetti burst on success
+      launchConfetti();
+
+      showVoteSuccess(Object.values(voterSelections).join(', '), 'Todas as categorias');
+      setTimeout(() => showClosedScreen(currentConfig?.title || 'Votação', 'voted'), 3400);
+      updateSubmitState();
+      renderCategoryTabs();
+    }
+
+    function launchConfetti() {
+      if (typeof confetti === 'undefined') return;
+      const gold = '#c4973a', cream = '#e8d5a3', white = '#ffffff';
+      const shared = { particleCount: 60, spread: 70, startVelocity: 45, ticks: 120, zIndex: 9999 };
+      // Left cannon
+      confetti({ ...shared, origin: { x: 0.15, y: 0.75 }, angle: 65, colors: [gold, cream, white] });
+      // Right cannon
+      setTimeout(() => confetti({ ...shared, origin: { x: 0.85, y: 0.75 }, angle: 115, colors: [gold, cream, white] }), 180);
+      // Centre burst
+      setTimeout(() => confetti({ particleCount: 80, spread: 120, startVelocity: 30, origin: { x: 0.5, y: 0.6 }, colors: [gold, cream, white, '#fffbe8'], ticks: 160, zIndex: 9999 }), 400);
     }
 
     function showVoteSuccess(name, catName) {
@@ -303,28 +438,82 @@
 
       const allVoted = categories.length > 0 && allCatsVoted(sessionId, categories);
 
-      if (votingOpen && !allVoted && categories.length > 0) {
-        showVotingScreen();
-        // Try to land on first unvoted category
-        const firstUnvoted = categories.findIndex(c => !hasVotedInCat(sessionId, c.id));
-        activeCatIndex = firstUnvoted >= 0 ? firstUnvoted : 0;
-        renderCategoryTabs();
-        switchCategory(activeCatIndex);
-      } else if (votingOpen && allVoted) {
-        showClosedScreen(title, 'voted');
-      } else {
-        showClosedScreen(title, 'closed');
-      }
+      const votePath = `sessions/${sessionId}/votes/${voterId}`;
+      onValue(ref(db, votePath), (voteSnap) => {
+        const existingVote = voteSnap.val();
+        if (existingVote) {
+          hasSubmitted = true;
+          voterSelections = existingVote;
+          categories.forEach(cat => {
+            if (existingVote[cat.id]) setVotedForCat(sessionId, cat.id, existingVote[cat.id]);
+          });
+        } else {
+          hasSubmitted = false;
+          loadVoterSelections();
+        }
+
+        if (hasSubmitted) {
+          showClosedScreen(title, 'voted');
+        } else if (votingOpen && categories.length > 0) {
+          showVotingScreen();
+          const firstUnvoted = categories.findIndex(c => !hasVotedInCat(sessionId, c.id));
+          activeCatIndex = firstUnvoted >= 0 ? firstUnvoted : 0;
+          renderCategoryTabs();
+          switchCategory(activeCatIndex);
+        } else {
+          showClosedScreen(title, 'closed');
+        }
+
+        updateSubmitState();
+      });
 
       if (!initialized) {
         document.body.style.opacity = '1';
         initialized = true;
+        playIntro();
       }
     });
 
-    document.getElementById('confirmModal').addEventListener('click', e => {
-      if (e.target.id === 'confirmModal') closeModal('confirmModal');
+    /* ── TOAST SYSTEM (multi-stack) ── */
+    const toastQueue = [];
+    let toastActive = false;
+    function showToast(msg, type = 'default') {
+      toastQueue.push({ msg, type });
+      if (!toastActive) processToastQueue();
+    }
+    function processToastQueue() {
+      if (toastQueue.length === 0) { toastActive = false; return; }
+      toastActive = true;
+      const { msg, type } = toastQueue.shift();
+      const container = document.getElementById('toastContainer');
+      const t = document.createElement('div');
+      t.className = 'toast-item' + (type === 'success' ? ' toast-success' : type === 'warn' ? ' toast-warn' : '');
+      t.innerHTML = msg;
+      container.appendChild(t);
+      requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('show')));
+      setTimeout(() => {
+        t.classList.remove('show');
+        setTimeout(() => { t.remove(); processToastQueue(); }, 350);
+      }, 2800);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const modal = document.getElementById('confirmModal');
+      if (modal) modal.addEventListener('click', e => { if (e.target.id === 'confirmModal') closeModal('confirmModal'); });
     });
+
+    // Share button
+    window.shareEvent = async function() {
+      const title = document.getElementById('eventTitle')?.textContent || 'Evento';
+      if (navigator.share) {
+        try { await navigator.share({ title, url: location.href }); } catch(e) {}
+      } else {
+        try {
+          await navigator.clipboard.writeText(location.href);
+          showToast('🔗 Link copiado!', 'success');
+        } catch(e) { showToast('🔗 ' + location.href, 'default'); }
+      }
+    };
   </script>
 
   <style>
@@ -341,6 +530,161 @@
       --font-body: 'Jost', sans-serif;
       --radius: 14px;
     }
+
+    /* ── INTRO OVERLAY ── */
+    #introOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      pointer-events: none;
+      transition: opacity .9s cubic-bezier(0.22,1,0.36,1);
+    }
+    #introOverlay.out { opacity: 0; }
+    .intro-spotlight {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 60% at 50% 50%, color-mix(in srgb,var(--accent) 10%,transparent) 0%, transparent 70%);
+      animation: introSpot 2.2s ease-out forwards;
+    }
+    @keyframes introSpot {
+      0%   { opacity: 0; transform: scale(.7); }
+      30%  { opacity: 1; }
+      100% { opacity: .3; transform: scale(1.1); }
+    }
+    .intro-logo {
+      font-family: 'Cinzel', serif;
+      font-size: clamp(1.4rem, 4vw, 2.2rem);
+      font-weight: 900;
+      letter-spacing: .3em;
+      text-transform: uppercase;
+      color: var(--accent);
+      animation: introLogoIn .7s .2s cubic-bezier(0.22,1,0.36,1) both;
+      position: relative;
+      z-index: 1;
+    }
+    @keyframes introLogoIn {
+      from { opacity:0; transform:scale(.85) translateY(20px); }
+      to   { opacity:1; transform:none; }
+    }
+    .intro-line {
+      width: min(340px, 60vw);
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: introLineIn .8s .5s ease both;
+      position: relative;
+      z-index: 1;
+    }
+    @keyframes introLineIn { from{opacity:0;transform:scaleX(.2)} to{opacity:1;transform:none} }
+    .intro-sub {
+      font-family: 'Jost', sans-serif;
+      font-size: .72rem;
+      font-weight: 300;
+      letter-spacing: .3em;
+      text-transform: uppercase;
+      color: color-mix(in srgb,var(--text) 40%,transparent);
+      animation: introLogoIn .6s .7s ease both;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── CONNECTION BADGE ── */
+    #connBadge {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 200;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: color-mix(in srgb, #e05050 12%, var(--surface));
+      border: 1px solid color-mix(in srgb, #e05050 30%, transparent);
+      border-radius: 100px;
+      font-size: .72rem;
+      font-weight: 500;
+      color: #e05050;
+      letter-spacing: .06em;
+      backdrop-filter: blur(12px);
+      animation: fadeSlideUp .4s ease;
+    }
+    @keyframes fadeSlideUp {
+      from{opacity:0;transform:translateY(12px)}
+      to{opacity:1;transform:none}
+    }
+    #connBadge .conn-blink {
+      width:7px; height:7px; border-radius:50%;
+      background:#e05050;
+      animation: connBlink 1s ease infinite;
+    }
+    @keyframes connBlink { 50% { opacity:.3; } }
+
+    /* ── TOAST CONTAINER ── */
+    #toastContainer {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 500;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-item {
+      padding: 11px 22px;
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      border: 1px solid var(--card-border);
+      border-radius: 100px;
+      font-size: .82rem;
+      font-weight: 500;
+      color: var(--text);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 32px rgba(0,0,0,.4);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity .3s, transform .3s cubic-bezier(0.22,1,0.36,1);
+      white-space: nowrap;
+    }
+    .toast-item.show { opacity: 1; transform: none; }
+    .toast-item.toast-success { border-color: color-mix(in srgb,#4fdb82 30%,transparent); color: #4fdb82; }
+    .toast-item.toast-warn { border-color: color-mix(in srgb,#e0a050 30%,transparent); color: #e0a050; }
+
+    /* ── CARD RING SELECT ANIMATION ── */
+    @keyframes cardSelect {
+      0%   { box-shadow: 0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent); }
+      50%  { box-shadow: 0 0 0 10px color-mix(in srgb,var(--accent) 0%,transparent); }
+      100% { box-shadow: 0 0 0 1px color-mix(in srgb,var(--accent) 20%,transparent), 0 8px 32px color-mix(in srgb,var(--accent) 12%,transparent); }
+    }
+    .card--voted {
+      animation: cardSelect .55s cubic-bezier(0.22,1,0.36,1) forwards;
+    }
+
+    /* ── SHARE BUTTON ── */
+    .share-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 16px;
+      border-radius: 100px;
+      border: 1px solid color-mix(in srgb,var(--card-border) 60%,transparent);
+      background: transparent;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+      font-size: .72rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all .2s;
+      letter-spacing: .06em;
+    }
+    .share-btn:hover { border-color: color-mix(in srgb,var(--accent) 40%,transparent); color: var(--accent); }
 
     *,
     *::before,
@@ -387,6 +731,26 @@
       inset: 0;
       background-image: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 0, 0, 0.04) 2px, rgba(0, 0, 0, 0.04) 4px);
       z-index: 4;
+    }
+
+    .spectrum-beam {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+      background-image: radial-gradient(circle at 20% 80%, rgba(232, 196, 58, 0.15), transparent 28%),
+                        radial-gradient(circle at 85% 20%, rgba(232, 196, 58, 0.14), transparent 30%),
+                        radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.09), transparent 42%);
+      mix-blend-mode: screen;
+      opacity: 0.9;
+      filter: blur(1px);
+      animation: glowShift 24s linear infinite;
+    }
+
+    @keyframes glowShift {
+      0% { transform: translate(0,0) scale(1); }
+      50% { transform: translate(-2%, -1%) scale(1.02); }
+      100% { transform: translate(0,0) scale(1); }
     }
 
     .glow {
@@ -979,6 +1343,29 @@
       color: var(--text-muted);
     }
 
+    .submit-widget {
+      margin-top: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+      padding: 12px 0 10px;
+      border-top: 1px solid color-mix(in srgb, var(--card-border) 55%, transparent);
+    }
+
+    .submit-widget .btn {
+      min-width: 220px;
+    }
+
+    .submit-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      flex: 1;
+      margin: 0;
+      min-width: 250px;
+    }
+
     /* CANDIDATES GRID */
     .candidates-grid {
       display: grid;
@@ -1487,11 +1874,29 @@
 
 <body>
 
+  <!-- INTRO OVERLAY -->
+  <div id="introOverlay">
+    <div class="intro-spotlight"></div>
+    <div class="intro-logo">Grupo Armindo</div>
+    <div class="intro-line"></div>
+    <div class="intro-sub">Votação ao Vivo</div>
+  </div>
+
+  <!-- CONNECTION BADGE -->
+  <div id="connBadge">
+    <span class="conn-blink"></span>
+    <span>Sem ligação — A reconectar…</span>
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div id="toastContainer"></div>
+
   <!-- BACKGROUND -->
   <div class="bg-layer">
     <div class="glow glow-1"></div>
     <div class="glow glow-2"></div>
     <div class="glow glow-3"></div>
+    <div class="spectrum-beam"></div>
     <div class="bg-vignette"></div>
     <div class="bg-scanlines"></div>
   </div>
@@ -1507,9 +1912,15 @@
       <div class="topbar-divider"></div>
       <div class="topbar-brand">Grupo Armindo</div>
     </div>
-    <div class="status-pill" id="statusPill">
-      <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">—</span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="share-btn" onclick="shareEvent()" title="Partilhar evento">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        Partilhar
+      </button>
+      <div class="status-pill" id="statusPill">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">—</span>
+      </div>
     </div>
   </nav>
 
@@ -1581,6 +1992,11 @@
         <span>Escolhe o teu favorito — apenas um voto por categoria por sessão</span>
       </div>
       <div class="candidates-grid" id="candidatesGrid"></div>
+
+      <div class="submit-widget">
+        <button id="submitVoteBtn" class="btn btn-primary" onclick="submitVote()" disabled>Submeter Votos</button>
+        <p id="submitHint" class="submit-hint">Seleciona uma opção em todas as categorias antes de submeter.</p>
+      </div>
     </div>
 
   </div>
@@ -1623,6 +2039,13 @@
     <div id="successCat"></div>
   </div>
 
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW reg failed', err));
+      });
+    }
+  </script>
 </body>
 
 </html>

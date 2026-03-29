@@ -9,6 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Jost:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -36,6 +37,9 @@
 
     const ADMIN_PASS = "admin1234";
     let authed = false;
+    let loginAttempts = 0;
+    let loginLocked = false;
+    let lockoutTimer = null;
 
     // ── AUTH ──
     function checkAuth() {
@@ -46,14 +50,40 @@
     }
 
     window.doLogin = function () {
+      if (loginLocked) return;
       const val = document.getElementById('passInput').value;
       if (val === ADMIN_PASS) {
+        loginAttempts = 0;
         sessionStorage.setItem('ga_admin_auth', val);
         authed = true;
         document.getElementById('authWall').style.display = 'none';
         showApp();
       } else {
-        document.getElementById('authError').style.display = 'block';
+        loginAttempts++;
+        if (loginAttempts >= 5) {
+          loginLocked = true;
+          document.getElementById('passInput').disabled = true;
+          document.getElementById('loginBtn').disabled = true;
+          let remaining = 60;
+          const errEl = document.getElementById('authError');
+          const tick = () => {
+            errEl.style.display = 'block';
+            errEl.textContent = `⛔ Demasiadas tentativas. Aguarda ${remaining}s…`;
+            if (remaining-- <= 0) {
+              loginLocked = false; loginAttempts = 0;
+              document.getElementById('passInput').disabled = false;
+              document.getElementById('loginBtn').disabled = false;
+              errEl.style.display = 'none';
+              clearInterval(lockoutTimer);
+            }
+          };
+          tick();
+          lockoutTimer = setInterval(tick, 1000);
+        } else {
+          const errEl = document.getElementById('authError');
+          errEl.style.display = 'block';
+          errEl.textContent = `Palavra-passe incorrecta (${loginAttempts}/5).`;
+        }
         document.getElementById('passInput').style.animation = 'none';
         requestAnimationFrame(() => { document.getElementById('passInput').style.animation = 'shake 0.4s ease'; });
       }
@@ -63,6 +93,15 @@
       document.getElementById('passInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') window.doLogin(); });
       checkAuth();
       buildTemplateGrid();
+      // Keyboard shortcuts for broadcast
+      document.addEventListener('keydown', e => {
+        if (!authed) return;
+        const active = document.getElementById('sec_broadcast')?.classList.contains('active');
+        if (active && (e.key === ' ' || e.key === 'ArrowRight') && !e.target.matches('input,textarea,select')) {
+          e.preventDefault();
+          window.bcRevealNext();
+        }
+      });
     });
 
     function showApp() {
@@ -71,8 +110,19 @@
     }
 
     function loadConfig() {
-      onValue(ref(db, 'config'), (snap) => {
+      onValue(ref(db, 'config'), async (snap) => {
         config = snap.val() || {};
+
+        // Auto-seed Eurovision template na primeira vez em DB vazio
+        if (!sessionStorage.getItem('ga_seeded') && (!config.title && (!config.categories || config.categories.length === 0))) {
+          sessionStorage.setItem('ga_seeded', '1');
+          const euro = TEMPLATES.find(t => t.name === 'Eurovisão');
+          if (euro) {
+            await applyTemplate(euro, null);
+            config = (await get(ref(db, 'config'))).val() || {};
+          }
+        }
+
         // Support both legacy (candidates[]) and new (categories[])
         if (config.categories && config.categories.length > 0) {
           categories = config.categories;
@@ -103,6 +153,8 @@
         updateVoteCounts();
         renderResults();
       });
+      // Ensure QR is generated
+      setTimeout(() => { if(typeof generateQR === 'function') generateQR(); }, 1000);
     }
 
     function populateForm() {
@@ -521,7 +573,14 @@
     // ── TEMPLATES ──
     const TEMPLATES = [
       { cat: 'Música', icon: '🎵', name: 'Festival da Canção', title: 'Festival da Canção', subtitle: 'Qual é a melhor música?', accent: '#c4973a', accent2: '#e8d5a3', bg: '#06050f', surface: '#0d0c1a', text: '#ede9e0', cardBg: '#100f1e' },
-      { cat: 'Música', icon: '🎤', name: 'Eurovisão', title: 'Eurovision Song Contest', subtitle: 'Vote for your favourite!', accent: '#e8c400', accent2: '#ffe066', bg: '#04021a', surface: '#0a0830', text: '#f0eeff', cardBg: '#0c0a2e' },
+      { cat: 'Música', icon: '🎤', name: 'Eurovisão', title: 'Eurovision Song Contest 2026', subtitle: 'Vote for your favourite act!', description: 'O emocionante concurso de canções no seu streaming ao vivo.', sessionId: 'euro2026', accent: '#e8c400', accent2: '#ffe066', bg: '#04021a', surface: '#0a0830', text: '#f0eeff', cardBg: '#0c0a2e', categories: [
+          { id: 'cat_euro', name: 'Grande Final', candidates: [
+              { id: 'cand_1', name: 'País A – Wild Heart', subtitle: 'Artista A', photo: 'https://via.placeholder.com/360x360?text=Pa%C3%ADs+A' },
+              { id: 'cand_2', name: 'País B – Moonlight Dreams', subtitle: 'Artista B', photo: 'https://via.placeholder.com/360x360?text=Pa%C3%ADs+B' },
+              { id: 'cand_3', name: 'País C – Fire & Rhythm', subtitle: 'Artista C', photo: 'https://via.placeholder.com/360x360?text=Pa%C3%ADs+C' },
+              { id: 'cand_4', name: 'País D – Aurora Night', subtitle: 'Artista D', photo: 'https://via.placeholder.com/360x360?text=Pa%C3%ADs+D' }
+            ] }
+        ] },
       { cat: 'Música', icon: '🏆', name: 'MTV Awards', title: 'MTV Music Awards', subtitle: 'Best Music Video', accent: '#ff0050', accent2: '#ff80a0', bg: '#0a0000', surface: '#150005', text: '#ffe8ee', cardBg: '#120004' },
       { cat: 'Música', icon: '🎸', name: 'Rock Fest', title: 'Rock Festival', subtitle: 'Vote no teu artista favorito', accent: '#ff4400', accent2: '#ff8866', bg: '#080300', surface: '#120500', text: '#fff3ee', cardBg: '#0f0400' },
       { cat: 'Música', icon: '🎶', name: 'Festival Verão', title: 'Festival de Verão', subtitle: 'O público escolhe!', accent: '#00d46a', accent2: '#69f0ae', bg: '#00120a', surface: '#001a10', text: '#e8fff2', cardBg: '#001510' },
@@ -577,14 +636,19 @@
       setColorField('t_text', t.text); setColorField('t_cardBg', t.cardBg || t.bg);
       document.getElementById('f_title').value = t.title;
       document.getElementById('f_subtitle').value = t.subtitle;
+      if (t.description) document.getElementById('f_description').value = t.description;
       document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
+      if (card) card.classList.add('selected');
       updatePreview();
       showToast(`⟳ A aplicar "${t.name}"…`);
       const theme = { bg: t.bg, surface: t.surface || '#0d0c1a', accent: t.accent, accent2: t.accent2, text: t.text, cardBg: t.cardBg || t.bg };
       await set(ref(db, 'config/theme'), theme);
       await set(ref(db, 'config/title'), t.title);
       await set(ref(db, 'config/subtitle'), t.subtitle);
+      if (t.description) await set(ref(db, 'config/description'), t.description);
+      if (t.sessionId) await set(ref(db, 'config/sessionId'), t.sessionId);
+      if (t.categories) await set(ref(db, 'config/categories'), t.categories);
+      if (typeof t.votingOpen !== 'undefined') await set(ref(db, 'config/votingOpen'), t.votingOpen);
       showToast(`✦ Template "${t.name}" aplicado!`);
     }
 
@@ -632,6 +696,33 @@
       setTimeout(() => t.classList.remove('show'), 3500);
     }
 
+    // ── QR CODE ──
+    let qrInstance = null;
+    function generateQR() {
+      const url = location.origin + '/index.html';
+      document.getElementById('qrUrl').textContent = url;
+      const container = document.getElementById('qrCanvas');
+      container.innerHTML = '';
+      if (typeof QRCode !== 'undefined') {
+        qrInstance = new QRCode(container, {
+          text: url, width: 160, height: 160,
+          colorDark: '#c4973a', colorLight: '#07060e',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      } else {
+        container.innerHTML = `<a href="${url}" target="_blank" style="color:var(--accent);font-size:.75rem;word-break:break-all">${url}</a>`;
+      }
+    }
+
+    // ── SUSPENSE MODE ──
+    window.triggerSuspense = async function() {
+      await set(ref(db, 'config/broadcast/suspense'), true);
+      showToast('⚡️ Suspense mode activado!');
+      setTimeout(async () => {
+        await set(ref(db, 'config/broadcast/suspense'), false);
+      }, 5000);
+    };
+
 
     // ── BROADCAST CONTROLS ──
     window.bcRevealNext = async function () {
@@ -666,14 +757,16 @@
       renderBroadcastPreview();
     };
 
+    window.triggerObsEvent = async function(type) {
+      await set(ref(db, 'config/broadcast/trigger_' + type), Date.now());
+      showToast('✦ Efeito disparado no OBS: ' + type);
+    };
+
     window.saveBroadcast = async function () {
       const bc = {
         catId: document.getElementById('bc_catId').value,
         customLabel: document.getElementById('bc_label').value.trim(),
         revealed: parseInt(document.getElementById('bc_revealed_count')?.textContent || '0') || config.broadcast?.revealed || 0,
-        showSpokesperson: document.getElementById('bc_showSpoke').checked,
-        spokespersonName: document.getElementById('bc_spokeName').value.trim(),
-        spokespersonRole: document.getElementById('bc_spokeRole').value.trim(),
         showLiveVotes: document.getElementById('bc_showLive').checked,
         highlightLeader: document.getElementById('bc_hlLeader').checked,
       };
@@ -713,9 +806,6 @@
       const catSel = document.getElementById('bc_catId');
       if (catSel) catSel.innerHTML = categories.map(c => `<option value="${c.id}"${c.id === (o.catId || categories[0]?.id) ? ' selected' : ''}>${c.name}</option>`).join('');
       setVal('bc_label', o.customLabel || '');
-      setCheck('bc_showSpoke', o.showSpokesperson !== false);
-      setVal('bc_spokeName', o.spokespersonName || '');
-      setVal('bc_spokeRole', o.spokespersonRole || '');
       setCheck('bc_showLive', o.showLiveVotes !== false);
       setCheck('bc_hlLeader', o.highlightLeader !== false);
       renderBroadcastPreview();
@@ -740,10 +830,33 @@
       document.getElementById('sec_' + name).classList.add('active');
       if (el) el.classList.add('active');
       if (name === 'overlay') {
-        // refresh category select when entering overlay section
         populateOverlayForm(config.overlay);
         populateBroadcastForm(config.broadcast);
       }
+    };
+
+    // ── EXPORT CSV ──
+    window.exportResultsCSV = function () {
+      if (categories.length === 0) { showToast('⚠️ Sem categorias para exportar'); return; }
+      const rows = [['Categoria', 'Candidato', 'Votos', 'Percentagem']];
+      categories.forEach(cat => {
+        const cv = votes[cat.id] || {};
+        const total = Object.values(cv).reduce((a, b) => a + b, 0);
+        const sorted = [...(cat.candidates || [])]
+          .map(c => ({ ...c, count: cv[c.id] || 0 }))
+          .sort((a, b) => b.count - a.count);
+        sorted.forEach(c => {
+          const pct = total > 0 ? (c.count / total * 100).toFixed(1) : '0.0';
+          rows.push([cat.name, c.name, c.count, pct + '%']);
+        });
+      });
+      const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `resultados_${config.sessionId || 'sessao'}_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      showToast('✔️ Resultados exportados');
     };
   </script>
 
@@ -2229,9 +2342,9 @@
       <div class="auth-logo">GRUPO ARMINDO</div>
       <h2>Admin</h2>
       <p>Acesso restrito à equipa de produção</p>
-      <input type="password" id="passInput" placeholder="Palavra-passe…" />
+      <input type="password" id="passInput" placeholder="Palavra-passe…" autofocus />
       <div id="authError">Palavra-passe incorrecta</div>
-      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">Entrar</button>
+      <button class="btn btn-primary" id="loginBtn" style="width:100%;justify-content:center" onclick="doLogin()">Entrar</button>
     </div>
   </div>
 
@@ -2342,6 +2455,29 @@
             <p style="margin-top:12px;font-size:0.76rem;color:var(--text-muted)">Nova sessão permite que todos os
               utilizadores votem novamente. Apagar votos limpa apenas os contadores da sessão atual.</p>
           </div>
+
+          <!-- QR CODE CARD -->
+          <div class="card" style="margin-top:0">
+            <div class="card-title">QR Code de Votação</div>
+            <p style="font-size:.78rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6">Mostra este QR code no ecrã para que o público possa votar com o telemóvel.</p>
+            <div style="display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap">
+              <div id="qrCanvas" style="background:#07060e;padding:12px;border-radius:12px;border:1px solid var(--border);min-width:160px;min-height:160px;display:flex;align-items:center;justify-content:center"></div>
+              <div style="flex:1;min-width:180px">
+                <p style="font-size:.72rem;color:var(--text-muted);margin-bottom:8px">URL de votação:</p>
+                <code id="qrUrl" style="font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--accent);word-break:break-all;display:block;margin-bottom:12px"></code>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn btn-secondary btn-sm" onclick="generateQR()">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h3v3h-3v-3h-3z"/></svg>
+                    Gerar QR
+                  </button>
+                  <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(location.origin+'/index.html').then(()=>showToast('\u2714 URL copiado'))">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    Copiar URL
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- CATEGORIAS & CANDIDATOS -->
@@ -2369,6 +2505,10 @@
               <h1>Resultados</h1>
               <p>Resultados em tempo real por categoria</p>
             </div>
+            <button class="btn btn-secondary" onclick="exportResultsCSV()" title="Exportar resultados como CSV">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Exportar CSV
+            </button>
           </div>
           <div class="card">
             <div id="resultsArea"></div>
@@ -2508,7 +2648,9 @@
               </div>
               <div class="bc-reveal-actions">
                 <button class="btn-reveal" id="bc_next_btn" onclick="bcRevealNext()">▶ Revelar Próximo</button>
+                <span style="font-size:.68rem;color:var(--text-muted);letter-spacing:.05em;opacity:.65;white-space:nowrap">Space&nbsp;/&nbsp;→</span>
                 <button class="btn btn-secondary" onclick="bcRevealAll()">Revelar Todos</button>
+                <button class="btn btn-secondary" style="border-color:#b41414;color:#ffc4c4" onclick="triggerSuspense()">⚡️ Suspense</button>
                 <button class="btn btn-danger" onclick="bcReset()">↺ Reiniciar</button>
               </div>
             </div>
@@ -2530,26 +2672,14 @@
             </div>
           </div>
 
-          <!-- SPOKESPERSON -->
+          <!-- AÇÕES DIRETAS (VFX) -->
           <div class="card">
-            <div class="card-title">Spokesperson</div>
-            <div class="ov-control-row" style="margin-bottom:14px">
-              <div class="ov-control-label">Mostrar área de spokesperson<small>A zona direita com câmara e
-                  nameplate</small></div>
-              <label class="toggle"><input type="checkbox" id="bc_showSpoke" />
-                <div class="toggle-track"></div>
-                <div class="toggle-thumb"></div>
-              </label>
-            </div>
-            <div class="bc-spoke-grid">
-              <div class="form-group">
-                <label>Nome</label>
-                <input type="text" id="bc_spokeName" placeholder="ex: Maria Silva" />
-              </div>
-              <div class="form-group">
-                <label>Cargo / Papel</label>
-                <input type="text" id="bc_spokeRole" placeholder="ex: Presidente do Grupo" />
-              </div>
+            <div class="card-title">Efeitos Visuais Manuais (VFX)</div>
+            <p style="font-size:.78rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6">Estes botões disparam efeitos no OBS imediatamente, independentemente do progresso da revelação.</p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-secondary" style="border-color:#d4af37;color:#fff2b2" onclick="triggerObsEvent('confetti')">🎉 Lançar Confettis</button>
+              <button class="btn btn-secondary" style="border-color:#4fdb82;color:#b2ffce" onclick="triggerObsEvent('winner')">🏆 Forçar Animação Vencedor</button>
+              <button class="btn btn-secondary" onclick="triggerObsEvent('closed')">🛑 Chapa "Votação Encerrada"</button>
             </div>
           </div>
 

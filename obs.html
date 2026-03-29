@@ -9,6 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;900&family=Jost:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap"
     rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
   <script>
     function scaleObs() {
       const el = document.getElementById('scaleRoot'); if (!el) return;
@@ -24,7 +25,9 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
     const db = getDatabase(initializeApp({ apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik", authDomain: "aawards.firebaseapp.com", databaseURL: "https://aawards-default-rtdb.firebaseio.com", projectId: "aawards", storageBucket: "aawards.firebasestorage.app", messagingSenderId: "839334918366", appId: "1:839334918366:web:454a259fa3e2665b46ea4f" }));
-    let cfg = null, vts = {}, pTot = {}, vFTO = null, lcTO = null, prevLeader = '';
+    let cfg = null, vts = {}, pTot = {}, vFTO = null, lcTO = null, prevLeader = '', prevCatId = null, winnerShown = false;
+    let connectionOk = true;
+    let lastConfetti=0, lastWinner=0, lastClosed=0;
 
     /* ── CLOCK ── */
     function startClock() {
@@ -42,16 +45,35 @@
       })(performance.now());
     }
 
+    /* ── LUMINANCE GUARD (prevents bright themes from blowing out OBS) ── */
+    function perceivedLum(hex) {
+      hex = (hex || '#07060e').replace('#','').padEnd(6,'0');
+      const r = parseInt(hex.slice(0,2),16)/255, g = parseInt(hex.slice(2,4),16)/255, b = parseInt(hex.slice(4,6),16)/255;
+      return 0.299*r + 0.587*g + 0.114*b;
+    }
+    function enforceDark(hex, maxLum = 0.12) {
+      if (!hex || !hex.startsWith('#')) return '#07060e';
+      const lum = perceivedLum(hex);
+      if (lum <= maxLum) return hex;
+      const f = maxLum / lum;
+      const hx = hex.replace('#','').padEnd(6,'0');
+      const r = Math.round(parseInt(hx.slice(0,2),16)*f);
+      const g = Math.round(parseInt(hx.slice(2,4),16)*f);
+      const b = Math.round(parseInt(hx.slice(4,6),16)*f);
+      return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
+    }
+
     /* ── THEME ── */
     function applyTheme(t) {
       if (!t) return; const r = document.documentElement;
       r.style.setProperty('--acc', t.accent || '#c4973a');
       r.style.setProperty('--acc2', t.accent2 || '#e8d5a3');
-      r.style.setProperty('--bg', t.bg || '#07060e');
-      r.style.setProperty('--surface', t.surface || '#0d0c1a');
-      r.style.setProperty('--cardBg', t.cardBg || '#0e0d1c');
+      const safeBg = enforceDark(t.bg || '#07060e');
+      r.style.setProperty('--bg', safeBg);
+      document.body.style.background = safeBg;
+      r.style.setProperty('--surface', enforceDark(t.surface || '#0d0c1a', 0.18));
+      r.style.setProperty('--cardBg', enforceDark(t.cardBg || '#0e0d1c', 0.16));
       r.style.setProperty('--text', t.text || '#ede9e0');
-      // Rebuild aurora with new accent
       buildAurora();
     }
 
@@ -63,10 +85,16 @@
         auroraCtx = c.getContext('2d'); c.width = 1920; c.height = 1080;
         stars = Array.from({ length: 220 }, () => ({ x: Math.random() * 1920, y: Math.random() * 1080, r: Math.random() * 1.6 + .2, a: Math.random() * .5 + .05, da: (Math.random() - .5) * .004, vx: (Math.random() - .5) * .06, vy: (Math.random() - .5) * .04 }));
         (function loop() {
-          auroraCtx.clearRect(0, 0, 1920, 1080); auroraT += .005;
-          const acc = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim() || '#c4973a';
-          // Parse hex to rgb
-          const hx = acc.replace('#', '');
+          auroraT += .005;
+          const style = getComputedStyle(document.documentElement);
+          const acc = style.getPropertyValue('--acc').trim() || '#c4973a';
+          const bgColor = style.getPropertyValue('--bg').trim() || '#07060e';
+          // Always fill with the (already-clamped-dark) bg — canvas is self-contained
+          auroraCtx.globalAlpha = 1;
+          auroraCtx.fillStyle = bgColor;
+          auroraCtx.fillRect(0, 0, 1920, 1080);
+          // Parse accent hex to rgb
+          const hx = acc.replace('#', '').padEnd(6,'0');
           const ar = parseInt(hx.substring(0, 2), 16), ag = parseInt(hx.substring(2, 4), 16), ab = parseInt(hx.substring(4, 6), 16);
           for (let layer = 0; layer < 4; layer++) {
             const phase = auroraT + layer * 1.4;
@@ -87,7 +115,7 @@
             if (s.a < .03 || s.a > .65) s.da *= -1;
             if (s.x < -2) s.x = 1922; if (s.x > 1922) s.x = -2; if (s.y < -2) s.y = 1082; if (s.y > 1082) s.y = -2;
             auroraCtx.beginPath(); auroraCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-            auroraCtx.fillStyle = acc; auroraCtx.globalAlpha = s.a; auroraCtx.fill();
+            auroraCtx.fillStyle = acc; auroraCtx.globalAlpha = s.a * 0.4; auroraCtx.fill();
           });
           auroraCtx.globalAlpha = 1;
           requestAnimationFrame(loop);
@@ -113,7 +141,10 @@
     function flashVote() {
       const el = document.getElementById('voteFlash'); if (!el) return;
       el.classList.add('active'); clearTimeout(vFTO);
-      vFTO = setTimeout(() => el.classList.remove('active'), 600);
+      vFTO = setTimeout(() => el.classList.remove('active'), 800);
+      // Ripple on total counter
+      const tc = document.getElementById('totalCount');
+      if (tc) { tc.classList.remove('count-pop'); void tc.offsetWidth; tc.classList.add('count-pop'); }
     }
 
     /* ── LEADER CHANGE BANNER ── */
@@ -121,9 +152,55 @@
       const b = document.getElementById('leaderBanner'); if (!b) return;
       b.querySelector('.lcb-name').textContent = name;
       b.querySelector('.lcb-cat').textContent = cat || '';
+      b.classList.remove('show');
+      void b.offsetWidth;
       b.classList.add('show'); clearTimeout(lcTO);
-      lcTO = setTimeout(() => b.classList.remove('show'), 5000);
-      spawnParticles(50);
+      lcTO = setTimeout(() => b.classList.remove('show'), 6000);
+      spawnParticles(70);
+      // Spotlight pulse
+      triggerSpotlight();
+    }
+
+    /* ── SPOTLIGHT PULSE ── */
+    function triggerSpotlight() {
+      const sp = document.getElementById('spotlightLayer');
+      if (!sp) return;
+      sp.classList.remove('active');
+      void sp.offsetWidth;
+      sp.classList.add('active');
+      setTimeout(() => sp.classList.remove('active'), 2200);
+    }
+
+    /* ── WINNER REVEAL ── */
+    function showWinnerReveal(name, subtitle, pct, catName) {
+      const ov = document.getElementById('winnerOverlay');
+      if (!ov) return;
+      ov.querySelector('.wo-name').textContent = name;
+      ov.querySelector('.wo-subtitle').textContent = subtitle || '';
+      ov.querySelector('.wo-pct').textContent = pct + '%';
+      ov.querySelector('.wo-cat').textContent = catName || '';
+      ov.classList.remove('show');
+      void ov.offsetWidth;
+      ov.classList.add('show');
+      spawnParticles(120);
+      triggerSpotlight();
+      setTimeout(() => ov.classList.remove('show'), 8000);
+    }
+
+    /* ── CATEGORY WIPE TRANSITION ── */
+    function triggerCategoryWipe(cb) {
+      const wipe = document.getElementById('categoryWipe');
+      if (!wipe) { cb && cb(); return; }
+      wipe.classList.add('active');
+      setTimeout(() => { cb && cb(); }, 350);
+      setTimeout(() => wipe.classList.remove('active'), 900);
+    }
+
+    /* ── CONNECTION STATUS ── */
+    function setConnectionStatus(ok) {
+      connectionOk = ok;
+      const dot = document.getElementById('connDot');
+      if (dot) dot.className = 'conn-dot ' + (ok ? 'ok' : 'err');
     }
 
     /* ── RESOLVE CAT ── */
@@ -144,13 +221,48 @@
       applyTheme(config.theme);
       const bc = config.broadcast || {};
       const catId = bc.catId || config.activeCategory || config.categories?.[0]?.id || 'default';
+      
+      // Suspense toggle
+      if (bc.suspense) {
+        document.getElementById('scaleRoot').classList.add('suspense');
+      } else {
+        document.getElementById('scaleRoot').classList.remove('suspense');
+      }
+
+      // Category change wipe
+      const catChanged = prevCatId !== null && prevCatId !== catId;
+      prevCatId = catId;
+
       const { cat, cands, total } = resolveCat(config, votes, catId);
+      const catLabel = bc.customLabel || cat.name;
+
+      // VFX Triggers (Manual Override)
+      if (bc.trigger_confetti && bc.trigger_confetti > lastConfetti) {
+        lastConfetti = bc.trigger_confetti;
+        confetti({ particleCount: 200, spread: 140, origin: { y: 0.1 }, zIndex: 9999, colors: ['#c4973a','#e8d5a3','#ffffff'] });
+      }
+      if (bc.trigger_winner && bc.trigger_winner > lastWinner) {
+        lastWinner = bc.trigger_winner;
+        if (cands.length > 0) {
+          const pct = total > 0 ? (cands[0].count / total * 100).toFixed(1) : 0;
+          showWinnerReveal(cands[0].name, cands[0].subtitle || '', pct, catLabel);
+        }
+      }
+      if (bc.trigger_closed && bc.trigger_closed > lastClosed) {
+        lastClosed = bc.trigger_closed;
+        const ov = document.createElement('div');
+        ov.className = 'closed-stamp';
+        ov.innerHTML = '<div class="c-stamp-text">VOTAÇÃO ENCERRADA</div>';
+        document.getElementById('scaleRoot').appendChild(ov);
+        setTimeout(() => ov.classList.add('show'), 100);
+        setTimeout(() => { ov.classList.remove('show'); setTimeout(()=>ov.remove(), 1000); }, 6000);
+      }
+
       const isOpen = config.votingOpen || false;
       const revealed = Math.min(bc.revealed ?? 0, cands.length);
       const showSpoke = bc.showSpokesperson !== false;
-      const catLabel = bc.customLabel || cat.name;
-      const layout = bc.layout || 'split'; // 'split' | 'full' | 'minimal'
-      const rowStyle = bc.rowStyle || 'card'; // 'card' | 'line' | 'flag'
+      const layout = bc.layout || 'split';
+      const rowStyle = bc.rowStyle || 'card';
       const showPhotos = bc.showPhotos !== false;
       const showBars = bc.showBars !== false;
       const showPct = bc.showPct !== false;
@@ -167,13 +279,22 @@
       pTot[cat.id] = total;
       if (cands.length > 0 && cands[0].count > 0) {
         const ldr = cands[0].name;
-        if (prevLeader && prevLeader !== ldr) { showLeaderBanner(ldr, cat.name); }
+        if (prevLeader && prevLeader !== ldr) { showLeaderBanner(ldr, cat.name); winnerShown = false; }
         prevLeader = ldr;
       }
 
-      // Header
+      // Winner reveal: triggered when 1st place (last in reveal order) is newly revealed
+      const prevRevealedCount = parseInt(document.getElementById('bc_prev_revealed')?.value || '0');
+      const isFirstReveal = revealed > prevRevealedCount && revealed === cands.length;
+      if (document.getElementById('bc_prev_revealed')) document.getElementById('bc_prev_revealed').value = revealed;
+      if (isFirstReveal && !winnerShown && cands.length > 0 && cands[0].count > 0) {
+        winnerShown = true;
+        const pct = total > 0 ? (cands[0].count / total * 100).toFixed(1) : 0;
+        setTimeout(() => showWinnerReveal(cands[0].name, cands[0].subtitle || '', pct, catLabel), 600);
+      }
+
+      // Header updates (immediate, not gated behind wipe)
       document.getElementById('bcTitle').textContent = config.title || 'VOTAÇÃO';
-      document.getElementById('bcCatLabel').textContent = catLabel;
       document.getElementById('bcEyebrow').textContent = eyebrowText;
       document.getElementById('liveDot').className = 'live-dot' + (isOpen ? ' on' : ' off');
       const stag = document.getElementById('statusTag');
@@ -191,7 +312,6 @@
 
       // Footer
       document.getElementById('bbUrl').textContent = footerText;
-      document.getElementById('bbMid').textContent = catLabel;
 
       // Layout
       const stage = document.getElementById('mainStage');
@@ -205,8 +325,18 @@
       document.getElementById('spokeRole').textContent = sr;
       document.getElementById('spokeNameplate').style.display = (sn || sr) ? 'flex' : 'none';
 
-      // Rows
-      renderRows(cands, total, revealed, bc.highlightLeader !== false, rowStyle, showPhotos, showBars, showPct, showCount);
+      // Category label + rows — with wipe if category changed
+      const doRender = () => {
+        document.getElementById('bcCatLabel').textContent = catLabel;
+        document.getElementById('bbMid').textContent = catLabel;
+        if (catChanged) winnerShown = false;
+        renderRows(cands, total, revealed, bc.highlightLeader !== false, rowStyle, showPhotos, showBars, showPct, showCount);
+      };
+      if (catChanged) {
+        triggerCategoryWipe(doRender);
+      } else {
+        doRender();
+      }
     }
 
     function renderRows(cands, total, revealed, hlLeader, style, showPhotos, showBars, showPct, showCount) {
@@ -264,8 +394,10 @@
       });
     }
 
-    onValue(ref(db, 'config'), snap => { cfg = snap.val() || {}; render(cfg, vts); });
-    onValue(ref(db, 'sessions'), snap => { vts = snap.val() || {}; if (cfg) render(cfg, vts); });
+    onValue(ref(db, 'config'), snap => { cfg = snap.val() || {}; render(cfg, vts); setConnectionStatus(true); },
+      err => setConnectionStatus(false));
+    onValue(ref(db, 'sessions'), snap => { vts = snap.val() || {}; if (cfg) render(cfg, vts); setConnectionStatus(true); },
+      err => setConnectionStatus(false));
     document.addEventListener('DOMContentLoaded', () => { startClock(); buildAurora(); });
   </script>
   <style>
@@ -276,6 +408,201 @@
       --surface: #0d0c1a;
       --cardBg: #0e0d1c;
       --text: #ede9e0;
+    }
+
+    /* ── COUNT POP ── */
+    @keyframes countPop {
+      0% { transform: scale(1); }
+      40% { transform: scale(1.28); color: var(--acc2); }
+      100% { transform: scale(1); }
+    }
+    .count-pop { animation: countPop .5s cubic-bezier(0.34,1.56,0.64,1) both; }
+
+    /* ── CONNECTION DOT ── */
+    .conn-dot {
+      position: absolute;
+      bottom: 28px;
+      right: 60px;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      z-index: 20;
+      transition: background .4s;
+    }
+    .conn-dot.ok { background: #4fdb82; box-shadow: 0 0 6px #4fdb8280; }
+    .conn-dot.err { background: #e05050; animation: connBlink 1s ease infinite; }
+    @keyframes connBlink { 50% { opacity: .3; } }
+
+    /* ── SPOTLIGHT LAYER ── */
+    #spotlightLayer {
+      position: absolute;
+      inset: 0;
+      z-index: 6;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .3s;
+      background:
+        radial-gradient(ellipse 40% 90% at 28% 0%, rgba(255,210,90,0.09) 0%, transparent 65%),
+        radial-gradient(ellipse 40% 90% at 72% 0%, rgba(255,230,140,0.06) 0%, transparent 65%);
+      /* No mix-blend-mode: keeps it contained and safe for all themes */
+    }
+    #spotlightLayer.active {
+      opacity: 1;
+      transition: opacity .12s;
+      animation: spFlicker 2.2s ease-out forwards;
+    }
+    @keyframes spFlicker {
+      0%   { opacity: 0; }
+      8%   { opacity: 1; }
+      20%  { opacity: .7; }
+      35%  { opacity: 1; }
+      60%  { opacity: .8; }
+      100% { opacity: 0; }
+    }
+
+    /* ── CATEGORY WIPE ── */
+    #categoryWipe {
+      position: absolute;
+      inset: 0;
+      z-index: 30;
+      pointer-events: none;
+      background: linear-gradient(90deg, var(--bg), color-mix(in srgb, var(--acc) 8%, var(--bg)));
+      transform: translateX(-102%);
+      transition: transform .35s cubic-bezier(0.76,0,0.24,1);
+    }
+    #categoryWipe.active {
+      transform: translateX(0);
+      transition: transform .35s cubic-bezier(0.76,0,0.24,1);
+    }
+    #categoryWipe.active.done {
+      transform: translateX(102%);
+      transition: transform .4s cubic-bezier(0.76,0,0.24,1) .18s;
+    }
+
+    /* ── WINNER OVERLAY ── */
+    #winnerOverlay {
+      position: absolute;
+      inset: 0;
+      z-index: 60;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      opacity: 0;
+      background: radial-gradient(ellipse 100% 100% at 50% 50%, rgba(6, 5, 12, 0.4) 0%, rgba(6, 5, 12, 0.95) 100%);
+      backdrop-filter: blur(0px);
+      transition: opacity .8s cubic-bezier(0.22,1,0.36,1);
+    }
+    #winnerOverlay.show {
+      opacity: 1;
+      backdrop-filter: blur(45px);
+      -webkit-backdrop-filter: blur(45px);
+    }
+    #winnerOverlay.show .wo-card {
+      animation: woCardIn .8s .15s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    @keyframes woCardIn {
+      from { opacity:0; transform: scale(.88) translateY(40px); }
+      to   { opacity:1; transform: none; }
+    }
+    .wo-eyebrow {
+      font-family: 'Cinzel', serif;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .4em;
+      text-transform: uppercase;
+      color: var(--acc);
+      margin-bottom: 12px;
+      opacity: 0;
+    }
+    #winnerOverlay.show .wo-eyebrow {
+      animation: woFadeUp .6s .05s ease both;
+    }
+    @keyframes woFadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:none} }
+    .wo-card {
+      background: color-mix(in srgb, var(--cardBg) 88%, transparent);
+      border: 1px solid var(--acc);
+      border-radius: 24px;
+      padding: 52px 80px;
+      text-align: center;
+      position: relative;
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--acc2) 15%, transparent),
+        0 0 80px color-mix(in srgb, var(--acc) 22%, transparent),
+        0 0 160px color-mix(in srgb, var(--acc) 10%, transparent);
+      backdrop-filter: blur(32px);
+    }
+    .wo-card::before {
+      content: '';
+      position: absolute;
+      top: -2px; left: 10%; right: 10%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--acc2), var(--acc), var(--acc2), transparent);
+      border-radius: 2px;
+      animation: woShine 3s ease-in-out infinite;
+    }
+    @keyframes woShine {
+      0%,100% { opacity:.6; }
+      50% { opacity:1; filter: drop-shadow(0 0 8px var(--acc)); }
+    }
+    .wo-crown {
+      font-size: 3.8rem;
+      line-height: 1;
+      margin-bottom: 8px;
+      animation: woCrown 1.2s .3s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    @keyframes woCrown {
+      from { opacity:0; transform:scale(.4) rotate(-20deg); }
+      to   { opacity:1; transform:none; }
+    }
+    .wo-name {
+      font-family: 'Cinzel', serif;
+      font-size: 6.5rem;
+      font-weight: 900;
+      letter-spacing: .06em;
+      color: #ffffff;
+      line-height: 1.1;
+      text-shadow: 0 0 80px var(--acc), 0 10px 30px rgba(0,0,0,0.8);
+    }
+    .wo-subtitle {
+      font-size: 1.1rem;
+      letter-spacing: .14em;
+      color: var(--acc);
+      opacity: .8;
+      margin-top: 6px;
+    }
+    .wo-stats {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      margin-top: 22px;
+      padding-top: 22px;
+      border-top: 1px solid color-mix(in srgb, var(--acc) 20%, transparent);
+    }
+    .wo-pct-wrap { text-align: center; }
+    .wo-pct {
+      font-family: 'Cinzel', serif;
+      font-size: 2.8rem;
+      font-weight: 900;
+      color: var(--acc);
+      line-height: 1;
+    }
+    .wo-pct-label {
+      font-size: .62rem;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--text) 40%, transparent);
+      margin-top: 4px;
+    }
+    .wo-cat {
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--text) 38%, transparent);
+      margin-top: 18px;
     }
 
     *,
@@ -306,6 +633,24 @@
       transform-origin: top left;
       overflow: hidden;
       background: var(--bg);
+      transition: filter 0.8s;
+    }
+
+    #scaleRoot.suspense::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 99;
+      box-shadow: inset 0 0 160px rgba(180, 20, 20, 0.6);
+      animation: heartbeat 1.4s infinite ease-in-out;
+    }
+    @keyframes heartbeat {
+      0% { box-shadow: inset 0 0 140px rgba(180, 20, 20, 0.3); }
+      15% { box-shadow: inset 0 0 250px rgba(220, 30, 30, 0.7); }
+      30% { box-shadow: inset 0 0 160px rgba(180, 20, 20, 0.4); }
+      45% { box-shadow: inset 0 0 220px rgba(200, 30, 30, 0.6); }
+      100% { box-shadow: inset 0 0 140px rgba(180, 20, 20, 0.3); }
     }
 
     /* ── AURORA ── */
@@ -445,6 +790,25 @@
       }
     }
 
+    #stageRim {
+      position: absolute;
+      inset: 20px;
+      z-index: 5;
+      pointer-events: none;
+      border: 2px solid transparent;
+      border-radius: 24px;
+      box-shadow: 0 0 48px color-mix(in srgb, var(--acc) 25%, transparent), inset 0 0 30px color-mix(in srgb, var(--acc2) 40%, transparent);
+      background-clip: border-box;
+      background-image: conic-gradient(from 1turn, var(--acc) 0%, var(--acc2) 34%, #fff 68%, var(--acc) 100%);
+      animation: rimPulse 8s ease-in-out infinite;
+      opacity: .95;
+    }
+
+    @keyframes rimPulse {
+      0%, 100% { transform: scale(1) rotate(0deg); filter: brightness(1); }
+      50% { transform: scale(1.01) rotate(0.26deg); filter: brightness(1.18); }
+    }
+
     /* ── LEADER BANNER ── */
     #leaderBanner {
       position: absolute;
@@ -505,49 +869,26 @@
 
     /* ── STAGE ── */
     .stage {
-      position: relative;
+      position: absolute;
+      inset: 0;
       z-index: 5;
-      width: 1920px;
-      height: 1080px;
-      display: grid;
-      grid-template-rows: 78px 1fr 52px;
     }
 
-    .layout-split {
-      grid-template-columns: 1fr 660px;
-    }
-
-    .layout-full {
-      grid-template-columns: 1fr 0px;
-    }
-
-    .layout-minimal {
-      grid-template-columns: 1fr 0px;
-    }
+    /* ── LAYOUT MODIFIERS (REMOVED) ── */
+    /* Handled purely by absolute floating layout now */
 
     /* ── TOPBAR ── */
     .topbar {
-      grid-column: 1/-1;
-      grid-row: 1;
+      position: absolute;
+      top: 40px;
+      left: 60px;
+      right: 60px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 60px;
-      background: color-mix(in srgb, var(--bg) 55%, transparent);
-      border-bottom: 1px solid color-mix(in srgb, var(--acc) 12%, transparent);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      position: relative;
-    }
-
-    .topbar::after {
-      content: '';
-      position: absolute;
-      bottom: -1px;
-      left: 60px;
-      right: 60px;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--acc) 22%, transparent)30%, color-mix(in srgb, var(--acc) 28%, transparent)50%, color-mix(in srgb, var(--acc) 22%, transparent)70%, transparent);
+      background: none;
+      border: none;
+      z-index: 10;
     }
 
     .tb-l {
@@ -668,17 +1009,20 @@
 
     /* ── LEADERBOARD COL ── */
     .lb-col {
-      grid-column: 1;
-      grid-row: 2;
+      position: absolute;
+      top: 140px;
+      left: 60px;
+      width: 680px;
+      bottom: 80px;
       display: flex;
       flex-direction: column;
-      padding: 36px 32px 24px 60px;
       overflow: hidden;
+      z-index: 5;
     }
 
     .layout-full .lb-col,
     .layout-minimal .lb-col {
-      padding-right: 60px;
+      width: 1400px;
     }
 
     .cat-eyebrow {
@@ -748,23 +1092,47 @@
       gap: 0;
     }
 
-    /* ── CARD STYLE ── */
+
+    /* ── SHIMMER SWEEP ── */
+    @keyframes sweep {
+      0% { transform: translateX(-150%) skewX(-20deg); }
+      40%, 100% { transform: translateX(200%) skewX(-20deg); }
+    }
+
+    /* ── CARD STYLE (MINIMAL) ── */
     .bc-row.style-card {
+      position: relative;
       display: flex;
       align-items: center;
-      gap: 14px;
-      padding: 10px 18px 10px 12px;
-      background: color-mix(in srgb, var(--cardBg) 72%, transparent);
-      border: 1px solid color-mix(in srgb, var(--acc) 8%, transparent);
-      border-radius: 10px;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      gap: 18px;
+      padding: 18px 32px;
+      background: rgba(6, 5, 12, 0.45);
+      border: 1px solid color-mix(in srgb, var(--acc) 15%, transparent);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 30px rgba(0,0,0,0.6);
+      border-radius: 4px;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      margin-bottom: 6px;
+      overflow: hidden;
+      transform: translateZ(0);
     }
 
     .bc-row.style-card.bc-row--leader {
       background: color-mix(in srgb, var(--acc) 12%, transparent);
-      border-color: color-mix(in srgb, var(--acc) 34%, transparent);
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 12%, transparent), 0 4px 32px color-mix(in srgb, var(--acc) 14%, transparent);
+      border-color: color-mix(in srgb, var(--acc) 50%, transparent);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 12px 40px rgba(0,0,0,0.8), 0 0 0 1px color-mix(in srgb, var(--acc) 15%, transparent);
+      transform: scale(1.01) translateZ(0);
+    }
+
+    .bc-row.style-card.bc-row--leader::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 150%; height: 100%;
+      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--acc) 25%, transparent), transparent);
+      animation: sweep 4.5s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      pointer-events: none;
+      z-index: 10;
     }
 
     /* ── LINE STYLE ── */
@@ -963,30 +1331,30 @@
     @keyframes rowIn {
       from {
         opacity: 0;
-        transform: translateX(-14px)
+        transform: translateY(16px);
       }
-
       to {
         opacity: 1;
-        transform: none
+        transform: none;
       }
     }
 
     .bc-row-rank {
       font-family: 'Cinzel', serif;
-      font-size: .7rem;
+      font-size: 1.1rem;
       font-weight: 700;
-      letter-spacing: .07em;
+      letter-spacing: .08em;
       color: var(--acc);
-      opacity: .5;
-      width: 28px;
+      opacity: .6;
+      width: 32px;
       flex-shrink: 0;
       text-align: center;
     }
 
     .bc-row--leader .bc-row-rank {
       opacity: 1;
-      font-size: .92rem;
+      font-size: 1.35rem;
+      text-shadow: 0 0 15px color-mix(in srgb, var(--acc) 60%, transparent);
     }
 
     .bc-row-photo {
@@ -1025,18 +1393,22 @@
 
     .bc-row-name {
       font-family: 'Cinzel', serif;
-      font-size: 1rem;
+      font-size: 1.5rem;
       font-weight: 600;
+      letter-spacing: .04em;
       color: var(--text);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      text-shadow: 0 4px 12px rgba(0,0,0,0.8);
     }
 
     .bc-row--leader .bc-row-name {
-      font-size: 1.14rem;
-      color: var(--acc2);
-      font-weight: 700;
+      font-size: 1.7rem;
+      color: #ffffff;
+      font-weight: 900;
+      letter-spacing: .06em;
+      text-shadow: 0 0 25px color-mix(in srgb, var(--acc2) 60%, transparent);
     }
 
     .bc-row-sub {
@@ -1055,10 +1427,23 @@
     }
 
     .bc-row-fill {
+      position: relative;
       height: 100%;
       background: linear-gradient(90deg, var(--acc), var(--acc2));
       width: 0;
       transition: width 1.15s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .bc-row-fill::after {
+      content: '';
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: #ffffff;
+      box-shadow: -2px 0 12px 3px var(--acc2);
+      border-radius: 0 2px 2px 0;
     }
 
     .bc-row-score {
@@ -1069,10 +1454,11 @@
 
     .bc-row-count {
       font-family: 'Cinzel', serif;
-      font-size: 1.2rem;
-      font-weight: 700;
+      font-size: 1.6rem;
+      font-weight: 900;
       color: var(--text);
       line-height: 1.1;
+      text-shadow: 0 4px 12px rgba(0,0,0,0.8);
     }
 
     .bc-row--leader .bc-row-count {
@@ -1224,16 +1610,17 @@
 
     /* ── BOTTOM BAR ── */
     .bbar {
-      grid-column: 1/-1;
-      grid-row: 3;
+      position: absolute;
+      bottom: 40px;
+      left: 60px;
+      right: 60px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 60px;
-      background: color-mix(in srgb, var(--bg) 58%, transparent);
       border-top: 1px solid color-mix(in srgb, var(--acc) 11%, transparent);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
+      padding-top: 10px;
+      background: none;
+      z-index: 10;
     }
 
     .bb-l {
@@ -1294,6 +1681,47 @@
       border-radius: 50%;
       background: color-mix(in srgb, var(--acc) 25%, transparent);
     }
+
+    /* ── CLOSED STAMP ── */
+    .closed-stamp {
+      position: absolute;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: color-mix(in srgb, var(--bg) 80%, transparent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      opacity: 0;
+      transition: opacity .6s;
+    }
+    .closed-stamp.show { opacity: 1; }
+    .c-stamp-text {
+      font-family: 'Cinzel', serif;
+      font-size: 5rem;
+      font-weight: 900;
+      color: #e05050;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      opacity: 0;
+      transform: scale(1.5);
+      transition: all .6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      text-shadow: 0 0 80px rgba(224, 80, 80, 0.4);
+    }
+    .closed-stamp.show .c-stamp-text {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    /* ── VIGNETTE ── */
+    #vignette {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background: radial-gradient(circle at center, transparent 30%, rgba(6, 5, 12, 0.8) 120%);
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -1309,6 +1737,28 @@
     <div class="brk brk-br"></div>
     <div id="voteFlash"></div>
     <div id="partLayer"></div>
+    <div id="stageRim"></div>
+    <div id="spotlightLayer"></div>
+    <div id="categoryWipe"></div>
+    <div class="conn-dot ok" id="connDot"></div>
+    <input type="hidden" id="bc_prev_revealed" value="0" />
+
+    <!-- WINNER OVERLAY -->
+    <div id="winnerOverlay">
+      <div class="wo-eyebrow">🏆 &nbsp; Vencedor &nbsp; 🏆</div>
+      <div class="wo-card">
+        <div class="wo-crown">👑</div>
+        <div class="wo-name"></div>
+        <div class="wo-subtitle"></div>
+        <div class="wo-stats">
+          <div class="wo-pct-wrap">
+            <div class="wo-pct"></div>
+            <div class="wo-pct-label">dos votos</div>
+          </div>
+        </div>
+        <div class="wo-cat"></div>
+      </div>
+    </div>
 
     <div id="leaderBanner">
       <div class="lcb-eyebrow">Novo Líder</div>
