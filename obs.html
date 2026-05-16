@@ -373,10 +373,10 @@
         ctx.clearRect(0, 0, W, H);
         time += 0.004;
         const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#FF3EDE';
-        const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-        bgGrad.addColorStop(0, '#010204');
-        bgGrad.addColorStop(1, '#050a1b');
-        ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, W, H);
+        
+        // Fundo Sólido (última layer)
+        ctx.fillStyle = '#05070a'; 
+        ctx.fillRect(0, 0, W, H);
         const NUM_LINES = 50; ctx.lineWidth = 1.8;
         for(let i=0; i<NUM_LINES; i++) {
           const p = i / (NUM_LINES - 1); ctx.strokeStyle = accent;
