@@ -209,6 +209,7 @@
       const closedEyebrow = document.querySelector('.closed-eyebrow');
       const closedDots = document.querySelector('.closed-dots');
       const closedEventName = document.getElementById('closedEventName');
+      const siteHeader = document.querySelector('.site-header');
       const showResults = currentConfig.showResultsPublicly || false;
       
       if (opTime && new Date(opTime) > new Date()) {
@@ -222,6 +223,7 @@
         if (closedEyebrow) closedEyebrow.style.display = 'none';
         if (closedEventName) closedEventName.style.display = 'none';
         if (closedDots) closedDots.style.display = 'none';
+        if (siteHeader) siteHeader.style.display = 'none';
         
         startCountdown(opTime);
       } else {
@@ -235,6 +237,7 @@
         if (closedEyebrow) closedEyebrow.style.display = 'block';
         if (closedEventName) closedEventName.style.display = 'inline-block';
         if (closedDots) closedDots.style.display = 'flex';
+        if (siteHeader) siteHeader.style.display = 'flex';
         
         if (showResults) {
           resultsDiv.style.display = 'block';
@@ -488,9 +491,25 @@
       document.title = title;
       document.getElementById('eventTitle').textContent = title;
       const topbarTitleEl = document.getElementById('topbarTitle');
-      if (topbarTitleEl) topbarTitleEl.textContent = data.logoText || 'GA';
+      if (topbarTitleEl) topbarTitleEl.textContent = data.bannerText || 'Votação';
+
+      const topbarLogoImg = document.getElementById('topbarLogoImg');
+      const topbarLogoFallback = document.getElementById('topbarLogoFallback');
+      
+      if (data.bannerLogoUrl && data.bannerLogoUrl.trim() !== '') {
+        if (topbarLogoImg) {
+          topbarLogoImg.src = data.bannerLogoUrl;
+          topbarLogoImg.style.display = 'block';
+        }
+        if (topbarLogoFallback) topbarLogoFallback.style.display = 'none';
+      } else {
+        if (topbarLogoImg) topbarLogoImg.style.display = 'none';
+        if (topbarLogoFallback) {
+          topbarLogoFallback.textContent = 'GA';
+          topbarLogoFallback.style.display = 'flex';
+        }
+      }
       document.getElementById('eventSubtitle').textContent = data.subtitle || '';
-      document.getElementById('eventDescription').textContent = data.description || '';
 
       votingOpen = data.votingOpen || false;
       currentSessionId = data.votingSessionId || 'default';
@@ -1806,80 +1825,71 @@
     }
 
     /* ── RESPONSIVE ── */
-    @media (max-width: 640px) {
-      .candidates-grid {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
-
-      .card {
-        padding: 10px 12px;
-        gap: 12px;
-      }
-
-      .card-left {
-        gap: 12px;
-      }
-
-      .card-number {
-        font-size: 1.2rem;
-        width: 24px;
-      }
-
-      .card__photo-wrap {
-        width: 52px;
-        height: 52px;
-      }
-
-      .card__name { 
-        font-size: 1.1rem; 
-      }
-      
-      .card__subtitle { 
-        font-size: 0.7rem; 
-      }
-
-      .vote-btn {
-        padding: 8px 16px;
-        font-size: 0.8rem;
-      }
-
-      .site-header {
-        padding: 24px 16px 16px;
-      }
-
-      #eventTitle {
-        font-size: 2.2rem;
-      }
-      
-      #eventSubtitle { font-size: 0.9rem; }
-      #eventDescription { display: none; } /* Hide description on mobile to save space */
-
-      .instruction-strip {
-        padding: 8px 16px;
-        margin-bottom: 20px;
-      }
-      
-      #openingCountdown > div:nth-child(2) {
-        gap: 16px !important;
-      }
-      .cd-item {
-        min-width: 75px;
-        padding: 20px 16px;
-        border-radius: 20px;
-      }
-      .cd-val {
-        font-size: 3rem;
-      }
-      .cd-lab {
-        font-size: 0.7rem;
-      }
+    @media (max-width: 1024px) {
+      #eventTitle { font-size: clamp(3rem, 12vw, 7rem); }
     }
 
-    @media (max-width: 360px) {
+    @media (max-width: 768px) {
+      .topbar-wrapper { top: 12px; padding: 0 16px; }
+      .topbar { padding: 6px 10px 6px 14px; height: 52px; width: 100%; border-radius: 16px; }
+      .topbar-logo { height: 22px !important; }
+      #topbarLogoFallback { font-size: 0.9rem !important; }
+      .topbar-divider { height: 14px; margin: 0 10px; }
+      .topbar-name-main { font-size: 0.75rem; }
+      
+      #navTotalVotes { font-size: 0.9rem !important; }
+      .status-pill { height: 32px !important; padding: 0 12px !important; }
+      
+      .site-header { padding: 110px 20px 40px; }
+      .header-eyebrow { font-size: 0.75rem; padding: 6px 18px; margin-bottom: 24px; }
+      #eventTitle { font-size: clamp(2.5rem, 15vw, 5rem); margin-bottom: 12px; }
+      #eventSubtitle { font-size: 0.85rem; margin-bottom: 20px; }
+      #eventDescription { display: none; }
+      
+      .cd-item { 
+        padding: 24px 12px; 
+        min-width: 130px; 
+        flex: 1 1 130px;
+        border-radius: 20px;
+      }
+      .cd-val { font-size: 3rem; margin-bottom: 4px; }
+      .cd-lab { font-size: 0.7rem; letter-spacing: 0.15em; }
+      
+      .candidates-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+      .card-content { padding: 16px; gap: 8px; }
+      .card__name { font-size: 1.3rem; }
+      .card__subtitle { font-size: 0.7rem; }
+      .vote-btn { padding: 12px 14px; font-size: 0.8rem; border-radius: 12px; }
+      .voted-indicator { padding: 10px; font-size: 0.8rem; border-radius: 12px; }
+      
+      .legal-footer { padding: 32px 20px 80px; }
+    }
+
+    @media (max-width: 480px) {
+      .topbar-name-main { display: none; }
+      .topbar-divider { display: none; }
+      
+      .site-header { padding: 100px 16px 30px; }
+      #eventTitle { font-size: 2.8rem; line-height: 0.9; }
+      
       .candidates-grid {
         grid-template-columns: 1fr;
       }
+      .card { aspect-ratio: 4/5; }
+      
+      .cd-item { 
+        min-width: 45%; 
+        padding: 16px 8px; 
+      }
+      .cd-val { font-size: 2.4rem; }
+      .cd-lab { font-size: 0.6rem; }
+      
+      .modal-box { padding: 24px 20px; }
+      .modal-box h3 { font-size: 1.5rem; }
+      .confirm-name { font-size: 1.2rem; }
     }
   </style>
 </head>
@@ -2020,10 +2030,11 @@
   <div class="topbar-wrapper">
     <nav class="topbar" role="navigation">
       <div class="topbar-left">
-        <img src="Logo.png" alt="Grupo Armindo Logo" class="topbar-logo" style="height: 28px; width: auto; object-fit: contain;" onerror="this.outerHTML='<div class=\'topbar-logo\' style=\'font-size:1.1rem;font-weight:800;\'>GA</div>'"/>
+        <img alt="Logo" id="topbarLogoImg" class="topbar-logo" style="height: 28px; width: auto; object-fit: contain; display: none;" />
+        <div class="topbar-logo" id="topbarLogoFallback" style="font-size:1.1rem;font-weight:800;display:flex;align-items:center;">GA</div>
         <div class="topbar-divider"></div>
         <div class="topbar-name">
-          <span class="topbar-name-main">Votação</span>
+          <span class="topbar-name-main" id="topbarTitle">Votação</span>
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 8px;">

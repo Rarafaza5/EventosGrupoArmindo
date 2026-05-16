@@ -3,16 +3,14 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Widget Votos — Thunderous Borders</title>
+<title>Widget Cilindro — Premium Overlay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;900&display=swap" rel="stylesheet"/>
 
 <style>
   :root {
-    --accent: #0055ff;
-    --accent2: #00d2ff;
+    --accent: #FF3EDE;
     --text: #ffffff;
-    --text-muted: rgba(255, 255, 255, 0.6);
     --font-main: 'Outfit', sans-serif;
   }
 
@@ -29,74 +27,95 @@
     overflow: hidden;
   }
 
-  .widget {
-    background: color-mix(in srgb, var(--surface) 60%, transparent);
-    backdrop-filter: blur(24px) saturate(1.5);
-    border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-    border-radius: 24px;
-    padding: 24px 32px;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    width: 320px;
-  }
-
-  .widget-brand {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .widget-logo {
-    width: 24px;
-    height: 24px;
-    background: var(--accent);
-    border-radius: 6px;
+  /* O Cilindro / Pill */
+  .pill-container {
+    position: relative;
+    border-radius: 1000px;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(30px);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.6rem;
-    font-weight: 900;
-    color: white;
+    min-width: 320px;
+    height: 140px;
+    box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+    /* Borda estática sempre visível */
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    transition: border-color 0.3s;
   }
 
-  .widget-title {
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+  /* O rasto de luz que dá a volta */
+  .border-streak {
+    position: absolute;
+    inset: -2px; /* Alinhado com a borda real */
+    border-radius: 1000px;
+    padding: 2px; /* Espessura do rasto */
+    background: conic-gradient(from 0deg, var(--accent), transparent 30%, transparent 70%, var(--accent));
+    -webkit-mask: 
+       linear-gradient(#fff 0 0) content-box, 
+       linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
   }
 
-  .widget-votes {
-    font-size: 4rem;
-    font-weight: 900;
-    color: var(--text);
+  .border-streak.animate {
+    animation: streakRotate 1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  }
+
+  @keyframes streakRotate {
+    0% { transform: rotate(0deg); opacity: 0; }
+    15% { opacity: 1; }
+    85% { opacity: 1; }
+    100% { transform: rotate(360deg); opacity: 0; }
+  }
+
+  /* Conteúdo */
+  .pill-content {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    z-index: 5;
+    padding: 0 40px;
+  }
+
+  #totalVotes {
+    font-size: 5.5rem;
+    font-weight: 950;
     line-height: 1;
     font-variant-numeric: tabular-nums;
+    letter-spacing: -0.04em;
+    transition: all 0.3s cubic-bezier(0.17, 0.89, 0.32, 1.49);
+    text-shadow: 0 8px 25px rgba(0,0,0,0.5);
   }
 
-  .widget-label {
-    font-size: 0.8rem;
-    font-weight: 700;
+  #totalVotes.pop {
+    transform: scale(1.18);
     color: var(--accent);
+    text-shadow: 0 0 30px color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+
+  .label {
+    font-size: 1.2rem;
+    font-weight: 900;
     text-transform: uppercase;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.3em;
+    opacity: 0.8;
+    color: var(--text);
+    transform: translateY(-8px);
   }
 </style>
 </head>
 <body>
 
-  <div class="widget">
-  <div class="widget-brand">
-    <div class="widget-logo">GA</div>
-    <div class="widget-title">Grupo Armindo</div>
+<div class="pill-container">
+  <div class="border-streak" id="streak"></div>
+  <div class="pill-content">
+    <div id="totalVotes">0</div>
+    <div class="label">VOTOS</div>
   </div>
-  <div class="widget-votes" id="totalVotes">0</div>
-  <div class="widget-label">Votos</div>
 </div>
 
 <script type="module">
@@ -110,46 +129,45 @@
     projectId: "aawards",
     storageBucket: "aawards.firebasestorage.app",
     messagingSenderId: "839334918366",
-    appId: "1:839334918366:web:454a259fa3e2665b46ea4f",
-    measurementId: "G-NLLMB9THVX"
+    appId: "1:839334918366:web:454a259fa3e2665b46ea4f"
   };
 
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
-  let lastTotal = 0;
-  let firstLoad = true;
+  let lastTotal = -1;
 
-  function applyTheme(theme) {
-    if (!theme) return;
-    const r = document.documentElement;
-    const acc1 = theme.accent || '#0055ff';
-    r.style.setProperty('--accent', acc1);
-    
-    if (theme.bg === '#ffffff' || theme.bg === '#fff') {
-      document.querySelector('.widget-box').style.background = '#f5f7fa';
-      document.querySelector('.vote-label').style.color = 'rgba(0,0,0,0.5)';
-    } else {
-      document.querySelector('.widget-box').style.background = '#0a0c10';
-      document.querySelector('.vote-label').style.color = 'rgba(255, 255, 255, 0.4)';
+  onValue(ref(db, 'config/theme'), snap => {
+    const theme = snap.val();
+    if (theme && theme.accent) {
+      document.documentElement.style.setProperty('--accent', theme.accent);
     }
-  }
-
-  onValue(ref(db, 'config'), (snap) => {
-    const data = snap.val();
-    if (data && data.theme) applyTheme(data.theme);
   });
 
   onValue(ref(db, 'votes'), (snap) => {
     const votes = snap.val() || {};
     const total = Object.values(votes).reduce((a, b) => a + b, 0);
-    
     const el = document.getElementById('totalVotes');
+    const streak = document.getElementById('streak');
+    
     if (total !== lastTotal) {
-      el.textContent = total;
+      el.textContent = total.toLocaleString();
+      
+      if (lastTotal !== -1 && total > lastTotal) {
+        // Pop Number
+        el.classList.remove('pop');
+        void el.offsetWidth;
+        el.classList.add('pop');
+        setTimeout(() => el.classList.remove('pop'), 500);
+
+        // Spin Streak
+        streak.classList.remove('animate');
+        void streak.offsetWidth;
+        streak.classList.add('animate');
+      }
+      
       lastTotal = total;
     }
-    firstLoad = false;
   });
 </script>
 </body>

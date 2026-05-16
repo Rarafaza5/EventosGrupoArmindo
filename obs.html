@@ -1,14 +1,229 @@
 <!DOCTYPE html>
 <html lang="pt">
-
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=1920" />
-  <title>Display — Resultados ao Vivo</title>
+  <meta name="viewport" content="width=1920, height=1080" />
+  <title>Eurovision Reveal — Dynamic Scoreboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&family=Outfit:wght@300;400;500;600;700&display=swap"
-    rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --accent: #FF3EDE;
+      --text: #ffffff;
+      --glass: rgba(0, 0, 0, 0.75);
+      --glass-border: rgba(255, 255, 255, 0.15);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 1920px;
+      height: 1080px;
+      background: #010204;
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      overflow: hidden;
+    }
+
+    #waveBgCanvas {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    .broadcast-layout {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      grid-template-columns: 600px 1fr;
+      padding: 100px;
+      gap: 100px;
+      position: relative;
+      z-index: 10;
+      align-items: start;
+    }
+
+    .camera-column {
+      display: flex;
+      flex-direction: column;
+      gap: 40px;
+      animation: slideInLeft 1s cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    .camera-frame {
+      width: 100%;
+      height: 750px;
+      background: #00FF00;
+      border: 8px solid var(--accent);
+      border-radius: 40px;
+      position: relative;
+      box-shadow: 0 0 100px color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+
+    .lower-third {
+      width: 100%;
+      background: var(--glass);
+      backdrop-filter: blur(40px);
+      border: 1px solid var(--glass-border);
+      border-left: 12px solid var(--accent);
+      padding: 30px 45px;
+      border-radius: 12px 40px 40px 12px;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+    }
+
+    .lt-name { font-size: 2.5rem; font-weight: 950; line-height: 1; letter-spacing: -0.02em; }
+    .lt-event { font-size: 1.1rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.3em; margin-top: 8px; opacity: 0.9; }
+
+    .results-column {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 40px;
+      animation: fadeIn 1s 0.5s ease both;
+    }
+
+    .scoreboard-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+      position: relative;
+      flex: 1;
+    }
+
+    .score-row {
+      height: 68px;
+      background: var(--glass);
+      backdrop-filter: blur(40px);
+      border: 1px solid var(--glass-border);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      position: absolute;
+      width: calc(50% - 15px);
+      transition: all 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .rank { 
+      width: 68px; 
+      background: rgba(255,255,255,0.06); 
+      height: 100%; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      font-size: 1.5rem; 
+      font-weight: 950; 
+      border-right: 1px solid var(--glass-border);
+      flex-shrink: 0;
+      color: rgba(255,255,255,0.4);
+    }
+
+    .photo-box {
+      width: 68px;
+      height: 100%;
+      flex-shrink: 0;
+      border-right: 1px solid var(--glass-border);
+    }
+    .photo-box img { width: 100%; height: 100%; object-fit: cover; }
+
+    .name { 
+      flex: 1; 
+      padding: 0 25px; 
+      font-size: 1.5rem; 
+      font-weight: 700; 
+      white-space: nowrap; 
+      overflow: hidden; 
+      text-overflow: ellipsis; 
+    }
+
+    .pts { 
+      width: 110px; 
+      text-align: right; 
+      padding-right: 30px; 
+      font-size: 2rem; 
+      font-weight: 950; 
+      font-variant-numeric: tabular-nums; 
+      flex-shrink: 0;
+      opacity: 0.2; /* Dimmed when not revealed */
+      transition: all 0.5s ease;
+    }
+
+    .score-row.revealed .pts {
+      opacity: 1;
+      color: var(--accent);
+      text-shadow: 0 0 15px color-mix(in srgb, var(--accent) 50%, transparent);
+    }
+
+    .score-row.leader {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 25%, var(--glass));
+      box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 15%, transparent);
+    }
+    .leader .rank { background: var(--accent); color: #fff; border: none; }
+
+    #revealOverlay {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at center, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.96) 100%);
+      backdrop-filter: blur(30px);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .reveal-card {
+      width: 1000px;
+      background: var(--glass);
+      border: 5px solid var(--accent);
+      border-radius: 70px;
+      padding: 100px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      box-shadow: 0 0 200px color-mix(in srgb, var(--accent) 50%, transparent);
+      animation: revealPop 0.8s cubic-bezier(0.17, 0.89, 0.32, 1.49) both;
+    }
+
+    .reveal-badge { font-size: 1.8rem; font-weight: 950; color: var(--accent); text-transform: uppercase; letter-spacing: 0.6em; margin-bottom: 50px; }
+    .reveal-photo { width: 450px; height: 450px; border-radius: 50%; border: 15px solid var(--accent); object-fit: cover; margin-bottom: 60px; box-shadow: 0 40px 100px rgba(0,0,0,0.8); }
+    .reveal-name { font-size: 7rem; font-weight: 950; line-height: 1; letter-spacing: -0.04em; }
+
+    /* ANIMATIONS */
+    @keyframes slideInLeft { from { transform: translateX(-150px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes fadeIn { from { opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes revealPop { 0% { transform: scale(0.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+  </style>
+</head>
+<body>
+
+  <canvas id="waveBgCanvas"></canvas>
+
+  <div class="broadcast-layout">
+    <div class="camera-column">
+      <div class="camera-frame"></div>
+      <div class="lower-third">
+        <div class="lt-name" id="ltSpokesperson">Porta-voz</div>
+        <div class="lt-event" id="ltEventName">Cargo</div>
+      </div>
+    </div>
+
+    <div class="results-column">
+      <div class="scoreboard-grid" id="scoreboardGrid"></div>
+    </div>
+  </div>
+
+  <div id="revealOverlay">
+    <div class="reveal-card">
+      <div class="reveal-badge">Our 12 points go to...</div>
+      <img id="revealPhoto" class="reveal-photo" src="" alt=""/>
+      <div class="reveal-name" id="revealName">Candidato</div>
+    </div>
+  </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -21,8 +236,7 @@
       projectId: "aawards",
       storageBucket: "aawards.firebasestorage.app",
       messagingSenderId: "839334918366",
-      appId: "1:839334918366:web:454a259fa3e2665b46ea4f",
-      measurementId: "G-NLLMB9THVX"
+      appId: "1:839334918366:web:454a259fa3e2665b46ea4f"
     };
 
     const app = initializeApp(firebaseConfig);
@@ -30,650 +244,157 @@
 
     let config = {};
     let votes = {};
-    let previousRanks = {};
-    let lastTotal = 0;
+    let lastRevealId = null;
 
-    function applyTheme(theme) {
-      if (!theme) return;
-      const root = document.documentElement;
-      root.style.setProperty('--bg', theme.bg || '#030014');
-      root.style.setProperty('--surface', theme.surface || 'rgba(255, 255, 255, 0.05)');
-      root.style.setProperty('--accent', theme.accent || '#ff007a');
-      root.style.setProperty('--accent-alt', theme.accent2 || '#00d2ff');
-      root.style.setProperty('--text', theme.text || '#ffffff');
-      root.style.setProperty('--font-display', theme.fontDisplay || "'Outfit', sans-serif");
-      
-      const acc1 = theme.accent || '#ff007a';
-      const acc2 = theme.accent2 || '#00d2ff';
-      root.style.setProperty('--euro-gradient', `linear-gradient(135deg, ${acc1} 0%, #7000ff 50%, ${acc2} 100%)`);
-    }
+    const ESC_POINTS = [12, 10, 8, 7, 6, 5, 4, 3, 2, 1];
 
-    function renderResults() {
+    function renderScoreboard() {
       const candidates = config.candidates || [];
-      if (!candidates.length) return;
+      const mode = config.broadcastMode || 'votes';
+      const revealStatus = config.revealStatus || {};
+      const revealActive = config.revealActive || false;
 
-      const sorted = [...candidates]
-        .map(c => ({ ...c, count: votes[c.id] || 0 }))
-        .sort((a, b) => b.count - a.count);
+      // 1. Ordem Inicial (Running Order)
+      const initialSorted = [...candidates].sort((a, b) => {
+        const nA = parseInt(a.number) || 999;
+        const nB = parseInt(b.number) || 999;
+        return nA - nB;
+      });
 
-      const total = sorted.reduce((s, c) => s + c.count, 0);
+      // 2. Ranking Real Total
+      let realRanking = [...candidates]
+        .map(c => ({ ...c, raw: votes[c.id] || 0 }))
+        .sort((a, b) => b.raw - a.raw);
 
-      animateCounter(document.getElementById('totalCount'), lastTotal, total, 1000);
-      lastTotal = total;
+      // 3. Processar cada candidato
+      let processed = initialSorted.map((c, i) => {
+        const isRevealed = !revealActive || revealStatus[c.id] === true;
+        
+        // Ranking idx para saber quantos pontos ele tem no total
+        const rankIdx = realRanking.findIndex(r => r.id === c.id);
+        
+        // SÓ calculamos os pontos ESC se o candidato estiver revelado E tiver votos
+        // Se não tiver votos, é sempre 0
+        const hasVotes = realRanking[rankIdx].raw > 0;
+        const finalValue = (isRevealed && hasVotes)
+          ? (mode === 'points' ? (ESC_POINTS[rankIdx] || 0) : realRanking[rankIdx].raw)
+          : 0;
+        
+        // displayValue para SORT: -1 se oculto (fica no fundo), finalValue se revelado
+        const displayValue = isRevealed ? finalValue : -1;
+        
+        return { ...c, finalValue, displayValue, originalOrder: i, isRevealed };
+      });
 
-      const grid = document.getElementById('resultsGrid');
-      grid.innerHTML = '';
+      // 4. Ordenar (Revealed primeiro, depois por pontos)
+      processed.sort((a, b) => {
+        if (b.displayValue !== a.displayValue) return b.displayValue - a.displayValue;
+        return a.originalOrder - b.originalOrder;
+      });
 
-      sorted.forEach((c, i) => {
-        const pct = total ? (c.count / total * 100) : 0;
-        const isWinner = i === 0 && !config.votingOpen;
-        const item = document.createElement('div');
-        item.className = 'result-item' + (isWinner ? ' winner' : '');
-        item.style.animationDelay = (i * 0.15) + 's';
+      const grid = document.getElementById('scoreboardGrid');
+      const maxRows = Math.min(processed.length, 26);
+      const half = Math.ceil(maxRows / 2);
+      
+      processed.forEach((c, i) => {
+        if (i >= 26) return;
 
-        item.innerHTML = `
-        <div class="result-card-inner">
-          <div class="rank-label">#${i + 1}</div>
-          <div class="photo-container">
-            ${c.photo ? `<img src="${c.photo}" class="photo"/>` : `<div class="photo-placeholder">${c.name.charAt(0)}</div>`}
-            <div class="overlay-gradient"></div>
-          </div>
-          <div class="result-info-box">
-            <div class="name-row">
-              <span class="candidate-name">${c.name}</span>
-              <span class="vote-pct-text">${pct.toFixed(1)}%</span>
-            </div>
-            <div class="bar-track">
-              <div class="bar-fill" style="width: ${pct}%"></div>
-            </div>
-            <div class="vote-count-label">${c.count} votos</div>
-          </div>
-        </div>
-      `;
-        grid.appendChild(item);
+        let row = document.getElementById(`row-${c.id}`);
+        if (!row) {
+          row = document.createElement('div');
+          row.id = `row-${c.id}`;
+          row.className = 'score-row';
+          row.innerHTML = `
+            <div class="rank">${c.number || (i+1)}</div>
+            <div class="photo-box">${c.photo ? `<img src="${c.photo}"/>` : ''}</div>
+            <div class="name">${c.name}</div>
+            <div class="pts">0</div>
+          `;
+          grid.appendChild(row);
+        }
+
+        const isRevealed = c.isRevealed;
+        row.classList.toggle('revealed', isRevealed);
+        row.classList.toggle('leader', i === 0 && isRevealed && c.displayValue > 0);
+
+        const targetCol = i < half ? 0 : 1;
+        const posInCol = i < half ? i : i - half;
+        const xPos = targetCol * (grid.offsetWidth / 2 + 15);
+        const yPos = posInCol * (68 + 12);
+
+        row.style.transform = `translate(${xPos}px, ${yPos}px)`;
+        row.querySelector('.rank').textContent = c.number || (i+1);
+        row.querySelector('.pts').textContent = c.finalValue;
       });
     }
 
-    function animateCounter(el, from, to, duration) {
-      if (from === to) { el.textContent = to; return; }
-      const start = performance.now();
-      const diff = to - from;
-      function tick(now) {
-        const elapsed = now - start;
-        const progress = Math.min(elapsed / duration, 1);
-        const ease = 1 - Math.pow(1 - progress, 3);
-        el.textContent = Math.round(from + diff * ease);
-        if (progress < 1) requestAnimationFrame(tick);
-        else el.textContent = to;
-      }
-      requestAnimationFrame(tick);
-    }
-
-    function updateStatus(isOpen) {
-      const dot = document.getElementById('statusDot');
-      const txt = document.getElementById('statusText');
-      const liveBadge = document.getElementById('liveBadge');
-      if (dot) dot.className = 'dot ' + (isOpen ? 'open' : 'closed');
-      if (txt) {
-        txt.textContent = isOpen ? 'Votação Aberta' : 'Votação Encerrada';
-        txt.style.color = isOpen ? '#4ade80' : '#ef4444';
-      }
-      // Badge removed
-    }
-
-    let countdownInterval = null;
-
-    onValue(ref(db, 'config'), (snap) => {
+    onValue(ref(db, 'config'), snap => {
       config = snap.val() || {};
-      applyTheme(config.theme);
-      document.getElementById('eventTitle').textContent = config.title || 'Resultados';
-      document.getElementById('eventSubtitle').textContent = config.subtitle || '';
-      updateStatus(config.votingOpen || false);
-      
-      const votingOpen = config.votingOpen || false;
-      const opTime = config.openingTime;
+      document.getElementById('ltEventName').textContent = config.spokespersonRole || '';
+      document.getElementById('ltSpokesperson').textContent = config.spokesperson || 'Porta-voz';
 
-      if (!votingOpen && opTime && new Date(opTime) > new Date()) {
-        document.getElementById('resultsGrid').style.display = 'none';
-        document.getElementById('countdownScreen').style.display = 'flex';
-        startCountdown(opTime);
+      if (config.theme && config.theme.accent) {
+        document.documentElement.style.setProperty('--accent', config.theme.accent);
+      }
+
+      if (config.reveal && config.reveal.active) {
+        if (lastRevealId !== config.reveal.candidateId) {
+          showReveal(config.reveal.candidateId);
+          lastRevealId = config.reveal.candidateId;
+        }
       } else {
-        document.getElementById('resultsGrid').style.display = 'grid';
-        document.getElementById('countdownScreen').style.display = 'none';
-        clearInterval(countdownInterval);
-        renderResults();
+        document.getElementById('revealOverlay').style.display = 'none';
+        lastRevealId = null;
       }
+      renderScoreboard();
     });
 
-    function startCountdown(endTimeStr) {
-      clearInterval(countdownInterval);
-      const endTime = new Date(endTimeStr).getTime();
-      const update = () => {
-        const diff = endTime - new Date().getTime();
-        if (diff <= 0) { clearInterval(countdownInterval); location.reload(); return; }
-        const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-        const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        const s = Math.floor((diff % (1000 * 60)) / 1000);
-        document.getElementById('obs-cd-d').textContent = String(d).padStart(2, '0');
-        document.getElementById('obs-cd-h').textContent = String(h).padStart(2, '0');
-        document.getElementById('obs-cd-m').textContent = String(m).padStart(2, '0');
-        document.getElementById('obs-cd-s').textContent = String(s).padStart(2, '0');
-      };
-      update();
-      countdownInterval = setInterval(update, 1000);
-    }
-
-    onValue(ref(db, 'votes'), (snap) => {
+    onValue(ref(db, 'votes'), snap => {
       votes = snap.val() || {};
-      renderResults();
-      setTimeout(() => {
-        document.querySelectorAll('.bar').forEach(bar => {
-          bar.style.width = bar.style.getPropertyValue('--target-w') || '0%';
-        });
-      }, 100);
+      renderScoreboard();
     });
-  </script>
 
-  <style>
-    :root {
-      --bg: #05070a;
-      --surface: #0f1218;
-      --accent: #0055ff;
-      --accent-alt: #00d2ff;
-      --text: #ffffff;
-      --font-display: 'Inter', sans-serif;
-      --font-body: 'Inter', sans-serif;
-      --euro-gradient: linear-gradient(90deg, var(--accent) 0%, #0033aa 100%);
+    function showReveal(cid) {
+      const c = (config.candidates || []).find(x => x.id === cid);
+      if (!c) return;
+      document.getElementById('revealName').textContent = c.name;
+      document.getElementById('revealPhoto').src = c.photo || '';
+      document.getElementById('revealOverlay').style.display = 'flex';
     }
 
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    html {
-      background: #04061a;
-    }
-    body {
-      width: 1920px;
-      height: 1080px;
-      overflow: hidden;
-      background: transparent;
-      color: var(--text);
-      font-family: var(--font-body);
-    }
-
-    /* WAVE BG CANVAS */
-    #waveBgCanvas {
-      position: fixed;
-      inset: 0;
-      width: 1920px;
-      height: 1080px;
-      z-index: -1;
-      pointer-events: none;
-      display: block;
-    }
-
-    .page {
-      width: 1920px;
-      height: 1080px;
-      display: flex;
-      flex-direction: column;
-      padding: 48px 60px 36px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    /* BACKGROUND EFFECTS REMOVED */
-
-    /* LIVE BADGE */
-    .live-badge {
-      display: none;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 14px 5px 10px;
-      background: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      border-radius: 100px;
-      font-family: var(--font-body);
-      font-size: 12px;
-      font-weight: 600;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color: #ef4444;
-      animation: liveGlow 2s ease infinite;
-      flex-shrink: 0;
-    }
-
-    .live-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #ef4444;
-      animation: livePulse 1.2s ease infinite;
-    }
-
-    @keyframes livePulse {
-
-      0%,
-      100% {
-        opacity: 1;
-        transform: scale(1);
-      }
-
-      50% {
-        opacity: 0.4;
-        transform: scale(0.7);
-      }
-    }
-
-    @keyframes liveGlow {
-
-      0%,
-      100% {
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-      }
-
-      50% {
-        box-shadow: 0 0 16px 0 rgba(239, 68, 68, 0.15);
-      }
-    }
-
-    /* HEADER */
-    .header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      margin-bottom: 28px;
-      background: transparent;
-      color: var(--text);
-      font-family: var(--font-main);
-      overflow: hidden;
-    }
-
-    /* ── OBS WRAPPER ── */
-    #obs-container {
-      position: absolute;
-      top: 50px;
-      left: 50px;
-      width: 600px;
-      background: color-mix(in srgb, var(--surface) 60%, transparent);
-      backdrop-filter: blur(32px) saturate(1.5);
-      border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-      border-radius: 28px;
-      padding: 36px 40px;
-      box-shadow: 0 24px 64px rgba(0,0,0,0.4);
-      display: flex;
-      flex-direction: column;
-      gap: 32px;
-    }
-
-    /* ── HEADER ── */
-    .obs-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 24px;
-    }
-
-    .obs-title {
-      font-family: var(--font-display);
-      font-size: 2.2rem;
-      font-weight: 900;
-      line-height: 1.1;
-      color: var(--text);
-      letter-spacing: -0.02em;
-    }
-    
-    .obs-subtitle {
-      font-size: 0.95rem;
-      font-weight: 500;
-      color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      margin-top: 6px;
-    }
-
-    .obs-total-wrap {
-      text-align: right;
-    }
-
-    .obs-total-num {
-      font-size: 3rem;
-      font-weight: 900;
-      color: var(--text);
-      font-variant-numeric: tabular-nums;
-      line-height: 1;
-    }
-
-    .obs-total-label {
-      font-size: 0.8rem;
-      font-weight: 700;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      margin-top: 4px;
-    }
-
-    .rank-row {
-      display: flex;
-      align-items: center;
-      gap: 20px;
-      background: rgba(255, 255, 255, 0.03);
-      border-radius: 16px;
-      padding: 12px 20px;
-      margin-bottom: 12px;
-      position: absolute;
-      width: 100%;
-      transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1);
-    }
-
-    .rank-row.is-first {
-      background: color-mix(in srgb, var(--accent) 15%, transparent);
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
-    }
-
-    .rank-pos {
-      font-size: 1.6rem;
-      font-weight: 900;
-      color: var(--text-muted);
-      width: 24px;
-      text-align: right;
-      flex-shrink: 0;
-    }
-
-    .rank-row.is-first .rank-pos { color: var(--accent); }
-
-    .rank-photo-wrap {
-      width: 54px;
-      height: 54px;
-      border-radius: 50%;
-      overflow: hidden;
-      background: rgba(255,255,255,0.05);
-      flex-shrink: 0;
-      border: 2px solid transparent;
-    }
-
-    .rank-row.is-first .rank-photo-wrap {
-      border-color: var(--accent);
-    }
-
-    .rank-photo { width: 100%; height: 100%; object-fit: cover; }
-
-    .rank-info { flex: 1; min-width: 0; }
-    
-    .rank-name {
-      font-family: var(--font-display);
-      font-size: 1.4rem;
-      font-weight: 800;
-      color: var(--text);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      line-height: 1.1;
-    }
-
-    .rank-bar-wrap {
-      width: 100%;
-      height: 8px;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 4px;
-      margin-top: 10px;
-      overflow: hidden;
-    }
-
-    .rank-bar {
-      height: 100%;
-      background: var(--accent);
-      border-radius: 4px;
-      transition: width 0.8s cubic-bezier(0.23, 1, 0.32, 1);
-    }
-
-    .rank-votes {
-      font-size: 1.8rem;
-      font-weight: 900;
-      color: var(--text);
-      font-variant-numeric: tabular-nums;
-      text-align: right;
-      line-height: 1;
-    }
-    .rank-votes-lbl {
-      font-size: 0.65rem;
-      font-weight: 700;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      text-align: right;
-      margin-top: 4px;
-    }
-
-    /* NO DATA */
-    .no-data {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex: 1;
-      flex-direction: column;
-      gap: 16px;
-      color: rgba(255, 255, 255, 0.2);
-    }
-
-    .no-data .icon {
-      font-size: 48px;
-      opacity: 0.4;
-    }
-
-    .no-data p {
-      font-family: var(--font-display);
-      font-size: 24px;
-      font-style: italic;
-    }
-    .obs-cd-item {
-      text-align: center;
-    }
-    .obs-cd-val {
-      font-size: 100px;
-      font-weight: 900;
-      line-height: 1;
-      font-family: var(--font-display);
-      background: var(--euro-gradient);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    .obs-cd-lab {
-      font-size: 14px;
-      text-transform: uppercase;
-      letter-spacing: 0.2em;
-      opacity: 0.4;
-      margin-top: 10px;
-    }
-  </style>
-</head>
-
-<body>
-  <!-- Wave Background Canvas -->
-  <canvas id="waveBgCanvas" aria-hidden="true"></canvas>
-  <script>
-  (function(){
-    const canvas = document.getElementById('waveBgCanvas');
-    const ctx = canvas.getContext('2d');
-    canvas.width=1920; canvas.height=1080;
-    
-    let C = { bg0:'#04061a', bg1:'#060824', glow0:'#FF1A8C', glow1:'#9b10b0' };
-    
-    function hexRGB(h) {
-      if (!h || typeof h !== 'string') return [0,0,0];
-      h = h.replace('#','');
-      if (h.length===3) h = h.split('').map(c=>c+c).join('');
-      if (h.length!==6) return [0,0,0];
-      const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
-      return (isNaN(r)||isNaN(g)||isNaN(b)) ? [0,0,0] : [r,g,b];
-    }
-    function hexToRgba(h, a) {
-      const [r,g,b] = hexRGB(h);
-      return `rgba(${r},${g},${b},${a})`;
-    }
-    function lerpColor(c1,c2,t) {
-      const a=hexRGB(c1),b=hexRGB(c2);
-      return `rgb(${Math.round(a[0]+(b[0]-a[0])*t)},${Math.round(a[1]+(b[1]-a[1])*t)},${Math.round(a[2]+(b[2]-a[2])*t)})`;
-    }
-
-    let W = 1920, H = 1080;
-
-    function draw(ts){
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.clearRect(0,0,W,H);
-      
-      // Deep background gradient
-      const bgGrad=ctx.createLinearGradient(0,0,W,H);
-      bgGrad.addColorStop(0, C.bg0);
-      bgGrad.addColorStop(0.6, C.bg1);
-      bgGrad.addColorStop(1, hexToRgba(C.glow0, 0.15));
-      ctx.fillStyle=bgGrad; 
-      ctx.fillRect(0,0,W,H);
-
-      const time = ts * 0.0002;
-
-      // Glowing Orbs
-      ctx.globalCompositeOperation = 'screen';
-      function drawOrb(x, y, r, color, alpha) {
-          const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-          grad.addColorStop(0, hexToRgba(color, alpha));
-          grad.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = grad;
-          ctx.fillRect(x - r, y - r, r * 2, r * 2);
-      }
-      const pulse = Math.sin(time * 2);
-      drawOrb(W*0.1, H*0.9, W*0.5, C.glow0, 0.45 + 0.1*pulse);
-      drawOrb(W*0.9, H*0.1, W*0.5, C.glow1, 0.35 - 0.1*pulse);
-      
-      // Topographic Eurovision Waves
-      ctx.globalCompositeOperation = 'source-over';
-      const NUM_LINES = 45;
-      ctx.lineWidth = 1.8;
-      
-      for(let i=0; i<NUM_LINES; i++) {
-          const p = i / (NUM_LINES - 1);
-          
-          // More color variations: weave the colors dynamically
-          const colorMix = (Math.sin(p * Math.PI * 4 + time * 1.2) * 0.5 + 0.5);
-          ctx.strokeStyle = lerpColor(C.glow0, C.glow1, colorMix);
-          
-          // Fade lines at edges, lower max opacity
-          const edgeFade = Math.sin(p * Math.PI);
-          ctx.globalAlpha = edgeFade * 0.45;
-          
+    (function(){
+      const canvas = document.getElementById('waveBgCanvas');
+      const ctx = canvas.getContext('2d');
+      let W, H;
+      function resize() { W = canvas.width = 1920; H = canvas.height = 1080; }
+      resize();
+      let time = 0;
+      function draw() {
+        ctx.clearRect(0, 0, W, H);
+        time += 0.004;
+        const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#FF3EDE';
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+        bgGrad.addColorStop(0, '#010204');
+        bgGrad.addColorStop(1, '#050a1b');
+        ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, W, H);
+        const NUM_LINES = 50; ctx.lineWidth = 1.8;
+        for(let i=0; i<NUM_LINES; i++) {
+          const p = i / (NUM_LINES - 1); ctx.strokeStyle = accent;
+          const edgeFade = Math.sin(p * Math.PI); ctx.globalAlpha = edgeFade * 0.4;
           ctx.beginPath();
-          for(let x=0; x<=W+20; x+=20) {
-              const nx = x * 0.0009;
-              const ny = p * 3.5;
-              
-              const n1 = Math.sin(nx*2.1 + ny*1.4 - time*1.2) * Math.cos(nx*0.9 - ny*1.1 + time*1.1);
-              const n2 = Math.sin(nx*3.4 - ny*2.3 + time*1.8) * Math.cos(nx*1.4 + ny*1.9 - time*1.4) * 0.5;
-              const n3 = Math.sin(nx*0.7 + ny*0.6 + time*0.7) * 1.2;
-              const noise = n1 + n2 + n3;
-              
-              const yBase = H * -0.2 + (H * 1.4) * p + (x * -0.15);
-              const amp = H * 0.12 * (0.5 + 0.5 * edgeFade);
-              
-              const y = yBase + noise * amp;
-              if(x===0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
+          for(let x=0; x<=W; x+=40) {
+            const nx = x * 0.0007; const ny = p * 4;
+            const noise = Math.sin(nx*2.5 + ny - time*1.2) * Math.cos(nx - ny + time) + Math.sin(nx*0.4 + time*0.5)*2;
+            const yBase = H * -0.2 + (H * 1.4) * p; const amp = H * 0.14 * edgeFade;
+            const y = yBase + noise * amp;
+            if(x===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
           }
           ctx.stroke();
+        }
+        requestAnimationFrame(draw);
       }
-      
-      // Accessibility Overlay
-      ctx.globalCompositeOperation = 'source-over';
-      const accGrad = ctx.createRadialGradient(W*0.5, H*0.4, 0, W*0.5, H*0.4, Math.max(W,H)*0.6);
-      accGrad.addColorStop(0, 'rgba(0,0,0,0.55)');
-      accGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = accGrad;
-      ctx.fillRect(0,0,W,H);
-      
-      requestAnimationFrame(draw);
-    }
-    requestAnimationFrame(draw);
-
-    function darkenColor(h, factor) {
-      const [r,g,b] = hexRGB(h);
-      return `rgb(${Math.round(r*factor)},${Math.round(g*factor)},${Math.round(b*factor)})`;
-    }
-
-    window._waveRenderer={
-      updateColors(a,a2){
-        C.glow0=a||C.glow0;
-        C.glow1=a2||C.glow1;
-        C.bg0=darkenColor(C.glow0, 0.08);
-        C.bg1=darkenColor(C.glow1, 0.12);
-      }
-    };
-  })();
+      draw();
+    })();
   </script>
-
-  <div class="page">
-
-    <header class="header">
-      <div>
-        <div class="header-left">
-          <div class="event-title" id="eventTitle">Resultados</div>
-        </div>
-        <div class="obs-subtitle" id="eventSubtitle">Sistema de Votação</div>
-      </div>
-      <div class="header-right">
-        <div class="total-votes-box">
-          <div class="total-label">Total de Votos</div>
-          <div class="total-number" id="totalCount">0</div>
-        </div>
-        <div class="status-row">
-          <div class="dot" id="statusDot"></div>
-          <span id="statusText">—</span>
-        </div>
-      </div>
-    </header>
-
-    <div class="divider"></div>
-
-    <div id="resultsGrid"></div>
-
-    <div id="countdownScreen" style="display:none; flex:1; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
-      <div style="font-size: 1.2rem; letter-spacing: 0.3em; text-transform: uppercase; opacity: 0.5; margin-bottom: 40px; font-weight: 700;">Abertura da Votação em</div>
-      <div style="display: flex; gap: 40px; justify-content: center;">
-        <div class="obs-cd-item"><div id="obs-cd-d" class="obs-cd-val">00</div><div class="obs-cd-lab">Dias</div></div>
-        <div class="obs-cd-item"><div id="obs-cd-h" class="obs-cd-val">00</div><div class="obs-cd-lab">Horas</div></div>
-        <div class="obs-cd-item"><div id="obs-cd-m" class="obs-cd-val">00</div><div class="obs-cd-lab">Mins</div></div>
-        <div class="obs-cd-item"><div id="obs-cd-s" class="obs-cd-val">00</div><div class="obs-cd-lab">Segs</div></div>
-      </div>
-    </div>
-
-    <footer class="footer">
-      <div class="footer-brand">GRUPO ARMINDO · SISTEMA DE VOTAÇÃO · RESULTADOS AO VIVO</div>
-      <div class="footer-time" id="footerTime"></div>
-    </footer>
-
-
-
-    <script>
-      function updateTime() {
-        const now = new Date();
-        document.getElementById('footerTime').textContent =
-          now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      }
-      updateTime();
-      setInterval(updateTime, 1000);
-
-      const observer = new MutationObserver(() => {
-        setTimeout(() => {
-          document.querySelectorAll('.bar').forEach(bar => {
-            const target = bar.style.getPropertyValue('--target-w');
-            if (target) bar.style.width = target;
-          });
-        }, 200);
-      });
-      observer.observe(document.getElementById('resultsGrid'), { childList: true });
-    </script>
 </body>
-
 </html>

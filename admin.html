@@ -26,6 +26,7 @@
 
   let config = {};
   let candidates = [];
+  let latestVotes = {};
 
   // ---- AUTH ----
   const ADMIN_PASS = "admin1234";
@@ -82,12 +83,14 @@
       applyTheme(config.theme);
       populateForm();
       renderCandidateList();
+      renderRevealCandidates();
       updateSessionInfo();
     });
 
     onValue(ref(db, 'votes'), (snap) => {
-      const votes = snap.val() || {};
-      updateVoteCounts(votes);
+      latestVotes = snap.val() || {};
+      updateVoteCounts(latestVotes);
+      renderRevealCandidates();
     });
 
     onValue(ref(db, 'voted_fingerprints'), (snap) => {
@@ -115,12 +118,24 @@
 
   function populateForm() {
     document.getElementById('f_title').value = config.title || '';
-    document.getElementById('f_logoText').value = config.logoText || 'GA';
-    document.getElementById('f_badgeText').value = config.badgeText || 'LIVE';
+    document.getElementById('f_bannerText').value = config.bannerText || 'Votação';
+    const bannerLogoB64 = config.bannerLogoUrl || '';
+    document.getElementById('f_bannerLogoB64').value = bannerLogoB64;
+    const bannerPreview = document.getElementById('bannerLogoPreview');
+    if (bannerLogoB64) {
+      bannerPreview.src = bannerLogoB64;
+      bannerPreview.style.display = 'block';
+    } else {
+      bannerPreview.style.display = 'none';
+      bannerPreview.src = '';
+    }
     document.getElementById('f_subtitle').value = config.subtitle || '';
-    document.getElementById('f_description').value = config.description || '';
     const ot = document.getElementById('f_openingTime');
     if (ot) ot.value = config.openingTime || '';
+    const sp = document.getElementById('f_spokesperson');
+    if (sp) sp.value = config.spokesperson || '';
+    const spr = document.getElementById('f_spokespersonRole');
+    if (spr) spr.value = config.spokespersonRole || '';
     const srt = document.getElementById('showResultsToggle');
     if (srt) srt.checked = config.showResultsPublicly || false;
 
@@ -136,6 +151,8 @@
     document.getElementById('t_radius').value = t.radius || '12px';
 
     document.getElementById('votingToggle').checked = config.votingOpen || false;
+    document.getElementById('f_broadcastMode').value = config.broadcastMode || 'votes';
+    document.getElementById('f_revealActive').checked = config.revealActive || false;
     updateToggleLabel(config.votingOpen);
   }
 
@@ -214,10 +231,17 @@
 
   window.saveEventInfo = async function() {
     await set(ref(db, 'config/title'), document.getElementById('f_title').value);
-    await set(ref(db, 'config/logoText'), document.getElementById('f_logoText').value || 'GA');
-    await set(ref(db, 'config/badgeText'), document.getElementById('f_badgeText').value || 'LIVE');
+    await set(ref(db, 'config/bannerText'), document.getElementById('f_bannerText').value || 'Votação');
+    await set(ref(db, 'config/bannerLogoUrl'), document.getElementById('f_bannerLogoB64').value);
     await set(ref(db, 'config/subtitle'), document.getElementById('f_subtitle').value);
-    await set(ref(db, 'config/description'), document.getElementById('f_description').value);
+    await set(ref(db, 'config/spokesperson'), document.getElementById('f_spokesperson').value || '');
+    await set(ref(db, 'config/spokespersonRole'), document.getElementById('f_spokespersonRole').value || '');
+    
+    // Cleanup old unused fields
+    await remove(ref(db, 'config/logoText'));
+    await remove(ref(db, 'config/badgeText'));
+    await remove(ref(db, 'config/description'));
+
     logAction('Informação do evento atualizada');
     showToast('✅ Informação guardada!');
   };
@@ -270,7 +294,7 @@
       item.className = 'candidate-item';
       item.dataset.id = c.id;
       item.innerHTML = `
-        <div class="c-num">${String(i+1).padStart(2,'0')}</div>
+        <div class="c-num">${c.number ? String(c.number).padStart(2,'0') : String(i+1).padStart(2,'0')}</div>
         <div class="c-thumb">
           ${c.photo ? `<img src="${c.photo}" alt=""/>` : `<div class="c-initial">${(c.name||'?').charAt(0)}</div>`}
         </div>
@@ -336,6 +360,7 @@
     editingIndex = -1;
     document.getElementById('candidateModalTitle').textContent = 'Adicionar Candidato';
     document.getElementById('c_name').value = '';
+    document.getElementById('c_number').value = '';
     document.getElementById('c_subtitle').value = '';
     document.getElementById('c_description').value = '';
     document.getElementById('c_photoPreview').src = '';
@@ -349,6 +374,7 @@
     const c = candidates[i];
     document.getElementById('candidateModalTitle').textContent = 'Editar Candidato';
     document.getElementById('c_name').value = c.name || '';
+    document.getElementById('c_number').value = c.number || '';
     document.getElementById('c_subtitle').value = c.subtitle || '';
     document.getElementById('c_description').value = c.description || '';
     if (c.photo) {
@@ -372,24 +398,178 @@
   window.saveCandidate = async function() {
     const name = document.getElementById('c_name').value.trim();
     if (!name) { alert('Nome obrigatório!'); return; }
+    
+    const numStr = document.getElementById('c_number').value.trim();
     const photo = document.getElementById('c_photoB64').value;
-    const candidate = {
-      id: editingIndex >= 0 ? candidates[editingIndex].id : 'c_' + Date.now(),
-      name,
-      subtitle: document.getElementById('c_subtitle').value.trim(),
-      description: document.getElementById('c_description').value.trim(),
-      photo: photo || null,
-    };
-    if (editingIndex >= 0) {
-      candidates[editingIndex] = candidate;
+    const editingId = editingIndex >= 0 ? candidates[editingIndex].id : 'c_' + Date.now();
+
+    // Lógica de Shift Automático
+    if (numStr) {
+      let targetNum = parseInt(numStr);
+      if (!isNaN(targetNum)) {
+        // Criar uma cópia para trabalhar
+        let tempCandidates = JSON.parse(JSON.stringify(candidates));
+        
+        // Se estivermos a editar, removemos o original temporariamente para o shift
+        if (editingIndex >= 0) {
+          tempCandidates.splice(editingIndex, 1);
+        }
+
+        // Função recursiva para empurrar os números
+        function pushDown(n) {
+          let conflict = tempCandidates.find(c => parseInt(c.number) === n);
+          if (conflict) {
+            conflict.number = String(n + 1).padStart(2, '0');
+            pushDown(n + 1);
+          }
+        }
+        pushDown(targetNum);
+        
+        // Novo candidato
+        const newC = {
+          id: editingId,
+          name,
+          number: String(targetNum).padStart(2, '0'),
+          subtitle: document.getElementById('c_subtitle').value.trim(),
+          description: document.getElementById('c_description').value.trim(),
+          photo: photo || null
+        };
+        
+        tempCandidates.push(newC);
+        // Re-ordenar por número para manter a lista organizada no admin
+        tempCandidates.sort((a,b) => (parseInt(a.number)||999) - (parseInt(b.number)||999));
+        candidates = tempCandidates;
+      }
     } else {
-      candidates.push(candidate);
+      // Sem número, lógica normal
+      const candidate = {
+        id: editingId,
+        name,
+        number: '',
+        subtitle: document.getElementById('c_subtitle').value.trim(),
+        description: document.getElementById('c_description').value.trim(),
+        photo: photo || null,
+      };
+      if (editingIndex >= 0) candidates[editingIndex] = candidate;
+      else candidates.push(candidate);
     }
+
     await set(ref(db, 'config/candidates'), candidates);
     closeModal('candidateModal');
-    logAction(`Candidato ${editingIndex >= 0 ? 'editado' : 'adicionado'}: ${name}`);
-    showToast('✅ Candidato guardado!');
+    logAction(`Candidato guardado (com shift): ${name}`);
+    showToast('✅ Candidato guardado e números atualizados!');
   };
+
+  // ---- BROADCAST CONTROL ----
+  window.triggerReveal = async function(cid) {
+    await set(ref(db, 'config/reveal'), { candidateId: cid, active: true });
+    logAction(`Revelação iniciada: ${cid}`);
+    showToast('✨ Revelação iniciada!');
+  };
+
+  window.clearReveal = async function() {
+    await set(ref(db, 'config/reveal'), { active: false });
+    logAction('Revelação limpa');
+    showToast('🧹 Revelação removida');
+  };
+
+  window.updateBroadcastConfig = async function() {
+    const mode = document.getElementById('f_broadcastMode').value;
+    const active = document.getElementById('f_revealActive').checked;
+    await set(ref(db, 'config/broadcastMode'), mode);
+    await set(ref(db, 'config/revealActive'), active);
+    showToast('📺 Configuração de transmissão atualizada!');
+  };
+
+  window.toggleCandidateReveal = async function(cid, val) {
+    await set(ref(db, `config/revealStatus/${cid}`), val);
+  };
+
+  window.resetRevealStatus = async function() {
+    if(!confirm('Limpar todas as revelações?')) return;
+    await set(ref(db, 'config/revealStatus'), null);
+    showToast('🧹 Revelações limpas!');
+  };
+
+  function renderRevealCandidates() {
+    const grid = document.getElementById('revealCandidatesGrid');
+    const mgrGrid = document.getElementById('revealManagerGrid');
+    if (!grid || !mgrGrid) return;
+    
+    grid.innerHTML = '';
+    mgrGrid.innerHTML = '';
+
+    const revealStatus = config.revealStatus || {};
+    const currentReveal = config.reveal || {};
+    const mode = config.broadcastMode || 'votes';
+    const ESC_POINTS = [12, 10, 8, 7, 6, 5, 4, 3, 2, 1];
+
+    // Ranking Real (para saber os pontos de cada um)
+    const realRanking = [...candidates]
+      .map(c => ({ id: c.id, votes: latestVotes[c.id] || 0 }))
+      .sort((a, b) => b.votes - a.votes);
+
+    // Dinâmico: Ordenar por votos (do último para o primeiro) para facilitar a revelação
+    const sortedForReveal = [...candidates]
+      .map(c => {
+        const votes = latestVotes[c.id] || 0;
+        const rankIdx = realRanking.findIndex(r => r.id === c.id);
+        const points = (mode === 'points' && votes > 0) ? (ESC_POINTS[rankIdx] || 0) : (mode === 'points' ? 0 : votes);
+        return { ...c, votes, points };
+      })
+      .sort((a, b) => a.votes - b.votes); // Sempre do menor para o maior para suspense
+
+    sortedForReveal.forEach((c, idx) => {
+      const isCelebrating = currentReveal.active && currentReveal.candidateId === c.id;
+      const isRevealed = revealStatus[c.id] === true;
+      const isWinner = idx === sortedForReveal.length - 1;
+      const displayPoints = mode === 'points' ? `${c.points} pts` : `${c.votes} votos`;
+
+      // Grid para 12 pontos (Apenas no grid de baixo se quiseres celebrar)
+      const card = document.createElement('div');
+      card.className = 'tpl-card' + (isCelebrating ? ' tpl-applied' : '');
+      card.style.padding = '15px';
+      card.innerHTML = `
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+          <div style="width:40px; height:40px; border-radius:50%; background:#333; overflow:hidden; border:2px solid ${isWinner ? 'var(--accent)' : 'transparent'}">
+            ${c.photo ? `<img src="${c.photo}" style="width:100%;height:100%;object-fit:cover;"/>` : ''}
+          </div>
+          <div style="flex:1;">
+            <div style="font-weight:900; font-size:0.9rem;">${c.name}</div>
+          </div>
+        </div>
+        <button class="btn ${isCelebrating ? 'btn-danger' : 'btn-primary'}" style="width:100%; justify-content:center; padding:8px;" onclick="${isCelebrating ? 'clearReveal()' : `triggerReveal('${c.id}')`}">
+          ${isCelebrating ? '🛑 Ocultar Celebração' : '✨ Celebrar 12 pts'}
+        </button>
+      `;
+      grid.appendChild(card);
+
+      // Grid para Gestão de Revelação (Principal)
+      const mCard = document.createElement('div');
+      mCard.className = 'tpl-card' + (isWinner ? ' winner-card' : '');
+      mCard.style.padding = '18px';
+      mCard.innerHTML = `
+        <div style="display:flex; align-items:center; gap:16px;">
+          <div style="width:54px; height:54px; border-radius:50%; background:#222; overflow:hidden; border:2px solid ${isWinner ? 'var(--accent)' : 'rgba(255,255,255,0.1)'}; flex-shrink:0;">
+            ${c.photo ? `<img src="${c.photo}" style="width:100%;height:100%;object-fit:cover;display:block;"/>` : ''}
+          </div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:900; font-size:1.1rem; line-height:1.1; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${c.name}</div>
+            <div style="font-size:0.75rem; opacity:0.7; font-weight:700; color:var(--accent); text-transform:uppercase;">${isWinner ? '🏆 LÍDER' : displayPoints}</div>
+          </div>
+          <div style="flex-shrink:0;">
+            <button class="btn ${isRevealed ? 'btn-secondary' : 'btn-primary'}" style="min-width:100px; padding:8px 12px; font-size:0.8rem; justify-content:center;" onclick="toggleCandidateReveal('${c.id}', ${!isRevealed})">
+              ${isRevealed ? 'Ocultar' : 'Revelar'}
+            </button>
+          </div>
+        </div>
+      `;
+      mgrGrid.appendChild(mCard);
+    });
+
+    // Mostrar secção de celebração apenas se houver um vencedor claro ou se o user quiser
+    document.getElementById('celebrationSection').style.display = 'block';
+  }
 
   window.closeModal = function(id) {
     document.getElementById(id).classList.remove('show');
@@ -408,6 +588,23 @@
       document.getElementById('c_photoB64').value = b64;
       document.getElementById('c_photoPreview').src = b64;
       document.getElementById('c_photoPreview').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  window.handleBannerLogoUpload = function(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) {
+      alert('Logo muito grande! Máximo: 500KB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const b64 = e.target.result;
+      document.getElementById('f_bannerLogoB64').value = b64;
+      document.getElementById('bannerLogoPreview').src = b64;
+      document.getElementById('bannerLogoPreview').style.display = 'block';
     };
     reader.readAsDataURL(file);
   };
@@ -1041,7 +1238,7 @@
   .c-num {
     font-family: 'DM Mono', monospace;
     font-size: 0.65rem; color: var(--text-subtle);
-    width: 20px; flex-shrink: 0;
+    width: 32px; flex-shrink: 0;
     letter-spacing: 0.05em;
   }
   .c-thumb {
@@ -1257,7 +1454,7 @@
 
   .tpl-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 16px;
   }
 
@@ -1508,6 +1705,9 @@
         <a class="nav-item active" onclick="showSection('control',this)">
           <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span> Live Control
         </a>
+        <a class="nav-item" onclick="showSection('broadcast',this)">
+          <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg></span> Transmissão
+        </a>
         <a class="nav-item" onclick="showSection('results',this)">
           <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span> Resultados
         </a>
@@ -1640,6 +1840,65 @@
         </div>
       </div>
 
+      <!-- SECTION: BROADCAST -->
+      <div id="sec_broadcast" class="section">
+        <div class="page-header">
+          <div class="page-header-left">
+            <h1>Controlo de Transmissão</h1>
+            <p>Gere os overlays e a revelação de pontos em direto</p>
+          </div>
+          <div style="display:flex; gap:12px;">
+            <button class="btn btn-secondary" onclick="resetRevealStatus()">🧹 Reset Revelações</button>
+            <button class="btn btn-danger" onclick="clearReveal()">🛑 Parar Overlay 12pt</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title card-title-accent">Configuração de Pontuação</div>
+          <div style="display: flex; gap: 24px; margin-top: 15px;">
+            <label class="form-group" style="flex: 1; margin-bottom:0">
+              <label>Modo de Exibição</label>
+              <select id="f_broadcastMode" class="form-control" onchange="updateBroadcastConfig()" style="width:100%; padding: 10px; border-radius: 8px; background: var(--surface2); color: var(--text); border: 1px solid var(--border);">
+                <option value="votes">🔢 Votos Reais (Contagem direta)</option>
+                <option value="points">🎤 Pontos ESC (12, 10, 8...)</option>
+              </select>
+            </label>
+            <div style="flex: 1; display:flex; align-items:center; gap:12px; padding-top:20px;">
+              <label class="toggle">
+                <input type="checkbox" id="f_revealActive" onchange="updateBroadcastConfig()"/>
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+              <span style="font-size:0.85rem;font-weight:600">Modo de Revelação Ativo (Esconde todos no início)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title card-title-accent">Sequência de Revelação (Menor para Maior)</div>
+          <p style="margin-bottom: 20px; font-size: 0.85rem; color: var(--text-muted);">
+            Os candidatos estão ordenados do que tem **menos votos** para o que tem **mais votos**. 
+            Revela-os nesta ordem para criar suspense até ao vencedor.
+          </p>
+          <div id="revealManagerGrid" class="tpl-grid">
+            <!-- Injected by JS -->
+          </div>
+        </div>
+
+        <div class="card" id="celebrationSection" style="display:none;">
+          <div class="card-title card-title-accent">Celebração de 12 Pontos</div>
+          <p style="margin-bottom: 20px; font-size: 0.85rem; color: var(--text-muted);">
+            Usa isto apenas para o vencedor ou para momentos especiais.
+          </p>
+          <div id="revealCandidatesGrid" class="tpl-grid">
+            <!-- Injected by JS -->
+          </div>
+          <p style="margin-top: 15px; font-size: 0.75rem; color: var(--text-muted); font-style: italic;">
+            💡 Dica: Podes mudar o <b>Número</b> de cada candidato na aba <b>Candidatos</b>.
+          </p>
+        </div>
+      </div>
+
       <!-- SECTION: RESULTS -->
       <div id="sec_results" class="section">
         <div class="page-header">
@@ -1670,18 +1929,6 @@
               <label>Título do Evento</label>
               <input type="text" id="f_title" placeholder="ex: Festival da Canção 2026"/>
             </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Texto do Logo (Topo Esquerdo)</label>
-              <input type="text" id="f_logoText" placeholder="ex: GA"/>
-            </div>
-            <div class="form-group">
-              <label>Texto do Badge (LIVE)</label>
-              <input type="text" id="f_badgeText" placeholder="ex: AO VIVO"/>
-            </div>
-          </div>
-          <div class="form-row">
             <div class="form-group">
               <label>Subtítulo</label>
               <input type="text" id="f_subtitle" placeholder="ex: Vota no teu favorito!"/>
@@ -1689,8 +1936,26 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Descrição (opcional)</label>
-              <textarea id="f_description" placeholder="Texto adicional para o público..."></textarea>
+              <label>Texto do Banner (Top-bar)</label>
+              <input type="text" id="f_bannerText" placeholder="ex: Votação"/>
+            </div>
+            <div class="form-group">
+              <label>Nome do Porta-voz</label>
+              <input type="text" id="f_spokesperson" placeholder="ex: Filomena Cautela"/>
+            </div>
+            <div class="form-group">
+              <label>Cargo/Cidade do Porta-voz</label>
+              <input type="text" id="f_spokespersonRole" placeholder="ex: Lisbon, Portugal"/>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Logo do Banner (Upload)</label>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <input type="file" id="f_bannerLogoFile" accept="image/*" style="flex: 1;" onchange="handleBannerLogoUpload(this)"/>
+                <input type="hidden" id="f_bannerLogoB64"/>
+                <img id="bannerLogoPreview" src="" style="height: 38px; width: auto; object-fit: contain; display: none; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 4px;" />
+              </div>
             </div>
           </div>
           <button class="btn btn-primary" onclick="saveEventInfo()">💾 Guardar</button>
@@ -1847,9 +2112,15 @@
       <button class="modal-close" onclick="closeModal('candidateModal')">✕</button>
     </div>
 
-    <div class="form-group" style="margin-bottom:16px">
-      <label>Nome *</label>
-      <input type="text" id="c_name" placeholder="ex: Mariza"/>
+    <div class="form-row">
+      <div class="form-group" style="flex: 0 0 100px;">
+        <label>Número</label>
+        <input type="text" id="c_number" placeholder="ex: 01"/>
+      </div>
+      <div class="form-group" style="flex: 1;">
+        <label>Nome *</label>
+        <input type="text" id="c_name" placeholder="ex: Mariza"/>
+      </div>
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label>Subtítulo / Categoria</label>
