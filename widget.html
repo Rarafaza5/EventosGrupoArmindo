@@ -10,6 +10,7 @@
 <style>
   :root {
     --accent: #FF3EDE;
+    --accent-glow: color-mix(in srgb, var(--accent) 35%, transparent);
     --text: #ffffff;
     --font-main: 'Outfit', sans-serif;
   }
@@ -25,98 +26,156 @@
     align-items: center;
     height: 100vh;
     overflow: hidden;
+    perspective: 1000px;
+  }
+
+  /* Floating animation for the whole widget */
+  .widget-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    animation: float 4s ease-in-out infinite;
+    position: relative;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0) rotateX(2deg); }
+    50% { transform: translateY(-15px) rotateX(-2deg); }
   }
 
   /* O Cilindro / Pill */
   .pill-container {
     position: relative;
     border-radius: 1000px;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(30px);
+    background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
     display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 320px;
+    min-width: 360px;
     height: 140px;
-    box-shadow: 0 30px 60px rgba(0,0,0,0.6);
-    /* Borda estática sempre visível */
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    transition: border-color 0.3s;
+    box-shadow: 
+      0 30px 60px rgba(0,0,0,0.5),
+      inset 0 0 0 1px rgba(255,255,255,0.1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 10;
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   }
 
-  /* O rasto de luz que dá a volta */
+  /* Glow effect behind the pill */
+  .pill-glow {
+    position: absolute;
+    inset: -20px;
+    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+    opacity: 0.5;
+    z-index: -1;
+    border-radius: 1000px;
+    transition: opacity 0.5s ease;
+  }
+
+  /* O rasto de luz que dá a volta - Multi-layer for more energy */
   .border-streak {
     position: absolute;
-    inset: -2px; /* Alinhado com a borda real */
+    inset: -3px;
     border-radius: 1000px;
-    padding: 2px; /* Espessura do rasto */
-    background: conic-gradient(from 0deg, var(--accent), transparent 30%, transparent 70%, var(--accent));
+    padding: 3px;
+    background: conic-gradient(from 0deg, var(--accent), transparent 20%, transparent 80%, var(--accent));
     -webkit-mask: 
        linear-gradient(#fff 0 0) content-box, 
        linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
-            mask-composite: exclude;
+    mask-composite: exclude;
     opacity: 0;
     pointer-events: none;
-    z-index: 2;
+    z-index: 15;
   }
 
   .border-streak.animate {
-    animation: streakRotate 1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    animation: streakRotate 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   }
 
   @keyframes streakRotate {
-    0% { transform: rotate(0deg); opacity: 0; }
-    15% { opacity: 1; }
-    85% { opacity: 1; }
-    100% { transform: rotate(360deg); opacity: 0; }
+    0% { transform: rotate(0deg) scale(1); opacity: 0; }
+    20% { opacity: 1; transform: rotate(72deg) scale(1.02); }
+    80% { opacity: 1; transform: rotate(288deg) scale(1.02); }
+    100% { transform: rotate(360deg) scale(1); opacity: 0; }
   }
 
   /* Conteúdo */
   .pill-content {
     display: flex;
     align-items: baseline;
-    gap: 14px;
-    z-index: 5;
-    padding: 0 40px;
+    gap: 18px;
+    z-index: 20;
+    padding: 0 50px;
   }
 
   #totalVotes {
-    font-size: 5.5rem;
-    font-weight: 950;
+    font-size: 6rem;
+    font-weight: 900;
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.04em;
-    transition: all 0.3s cubic-bezier(0.17, 0.89, 0.32, 1.49);
-    text-shadow: 0 8px 25px rgba(0,0,0,0.5);
+    letter-spacing: -0.05em;
+    transition: all 0.5s cubic-bezier(0.17, 0.89, 0.32, 1.49);
+    text-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    position: relative;
   }
 
   #totalVotes.pop {
-    transform: scale(1.18);
+    transform: scale(1.2) translateY(-5px);
     color: var(--accent);
-    text-shadow: 0 0 30px color-mix(in srgb, var(--accent) 50%, transparent);
+    text-shadow: 0 0 40px var(--accent-glow);
   }
 
   .label {
-    font-size: 1.2rem;
+    font-size: 1.4rem;
     font-weight: 900;
     text-transform: uppercase;
-    letter-spacing: 0.3em;
-    opacity: 0.8;
+    letter-spacing: 0.4em;
+    opacity: 0.6;
     color: var(--text);
-    transform: translateY(-8px);
+    transform: translateY(-10px);
+  }
+
+  /* Particle System Container */
+  #particles {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .particle {
+    position: absolute;
+    background: var(--accent);
+    border-radius: 50%;
+    pointer-events: none;
+  }
+
+  @keyframes particleOut {
+    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
   }
 </style>
 </head>
 <body>
 
-<div class="pill-container">
-  <div class="border-streak" id="streak"></div>
-  <div class="pill-content">
-    <div id="totalVotes">0</div>
-    <div class="label">VOTOS</div>
+<div class="widget-wrapper">
+  <div id="particles"></div>
+  <div class="pill-container">
+    <div class="pill-glow" id="glow"></div>
+    <div class="border-streak" id="streak"></div>
+    <div class="pill-content">
+      <div id="totalVotes">0</div>
+      <div class="label">VOTOS</div>
+    </div>
   </div>
 </div>
+
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -137,6 +196,47 @@
 
   let lastTotal = -1;
 
+  function animateValue(obj, start, end, duration) {
+    let startTimestamp = null;
+    const step = (timestamp) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+      obj.innerHTML = Math.floor(progress * (end - start) + start).toLocaleString();
+      if (progress < 1) {
+        window.requestAnimationFrame(step);
+      }
+    };
+    window.requestAnimationFrame(step);
+  }
+
+  function createParticles() {
+    const container = document.getElementById('particles');
+    const count = 12;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+
+    for (let i = 0; i < count; i++) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      
+      // Random direction and distance
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 100 + Math.random() * 150;
+      const tx = Math.cos(angle) * dist + 'px';
+      const ty = Math.sin(angle) * dist + 'px';
+      const size = 4 + Math.random() * 8 + 'px';
+
+      p.style.setProperty('--tx', tx);
+      p.style.setProperty('--ty', ty);
+      p.style.width = size;
+      p.style.height = size;
+      p.style.backgroundColor = accent;
+      p.style.animation = `particleOut ${0.6 + Math.random() * 0.4}s cubic-bezier(0.1, 0.8, 0.2, 1) forwards`;
+
+      container.appendChild(p);
+      setTimeout(() => p.remove(), 1000);
+    }
+  }
+
   onValue(ref(db, 'config/theme'), snap => {
     const theme = snap.val();
     if (theme && theme.accent) {
@@ -151,24 +251,32 @@
     const streak = document.getElementById('streak');
     
     if (total !== lastTotal) {
-      el.textContent = total.toLocaleString();
+      if (lastTotal === -1) {
+        el.textContent = total.toLocaleString();
+      } else {
+        animateValue(el, lastTotal, total, 800);
+      }
       
       if (lastTotal !== -1 && total > lastTotal) {
         // Pop Number
         el.classList.remove('pop');
         void el.offsetWidth;
         el.classList.add('pop');
-        setTimeout(() => el.classList.remove('pop'), 500);
+        setTimeout(() => el.classList.remove('pop'), 600);
 
         // Spin Streak
         streak.classList.remove('animate');
         void streak.offsetWidth;
         streak.classList.add('animate');
+
+        // Particles!
+        createParticles();
       }
       
       lastTotal = total;
     }
   });
 </script>
+
 </body>
 </html>
