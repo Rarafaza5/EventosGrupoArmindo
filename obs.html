@@ -3,474 +3,677 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Broadcast — Grupo Armindo</title>
+  <meta name="viewport" content="width=1920" />
+  <title>Display — Resultados ao Vivo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link
-    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;900&family=Jost:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&family=Outfit:wght@300;400;500;600;700&display=swap"
     rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
-  <script>
-    function scaleObs() {
-      const el = document.getElementById('scaleRoot'); if (!el) return;
-      const sx = window.innerWidth / 1920, sy = window.innerHeight / 1080, s = Math.min(sx, sy);
-      el.style.transform = `scale(${s})`;
-      el.style.left = ((window.innerWidth - 1920 * s) / 2) + 'px';
-      el.style.top = ((window.innerHeight - 1080 * s) / 2) + 'px';
-    }
-    window.addEventListener('DOMContentLoaded', scaleObs);
-    window.addEventListener('resize', scaleObs);
-  </script>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-    const db = getDatabase(initializeApp({ apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik", authDomain: "aawards.firebaseapp.com", databaseURL: "https://aawards-default-rtdb.firebaseio.com", projectId: "aawards", storageBucket: "aawards.firebasestorage.app", messagingSenderId: "839334918366", appId: "1:839334918366:web:454a259fa3e2665b46ea4f" }));
-    let cfg = null, vts = {}, pTot = {}, vFTO = null, lcTO = null, prevLeader = '', prevCatId = null, winnerShown = false;
-    let connectionOk = true;
-    let lastConfetti=0, lastWinner=0, lastClosed=0;
 
-    /* ── CLOCK ── */
-    function startClock() {
-      const tick = () => { const n = new Date(); const t = [n.getHours(), n.getMinutes(), n.getSeconds()].map(v => String(v).padStart(2, '0')).join(':'); document.querySelectorAll('.bc-clock').forEach(el => el.textContent = t); };
-      tick(); setInterval(tick, 1000);
-    }
+    const firebaseConfig = {
+      apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik",
+      authDomain: "aawards.firebaseapp.com",
+      databaseURL: "https://aawards-default-rtdb.firebaseio.com",
+      projectId: "aawards",
+      storageBucket: "aawards.firebasestorage.app",
+      messagingSenderId: "839334918366",
+      appId: "1:839334918366:web:454a259fa3e2665b46ea4f",
+      measurementId: "G-NLLMB9THVX"
+    };
 
-    /* ── ANIMATED COUNTER ── */
-    function animCount(el, from, to, ms = 1000) {
-      if (!el || from === to) return; const start = performance.now();
-      (function step(now) {
-        const p = Math.min((now - start) / ms, 1), e = 1 - Math.pow(1 - p, 4);
-        el.textContent = Math.round(from + (to - from) * e).toLocaleString('pt-PT');
-        if (p < 1) requestAnimationFrame(step); else el.textContent = to.toLocaleString('pt-PT');
-      })(performance.now());
-    }
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
 
-    /* ── LUMINANCE GUARD ── */
-    function perceivedLum(hex) {
-      hex = (hex || '#07060e').replace('#','').padEnd(6,'0');
-      const r = parseInt(hex.slice(0,2),16)/255, g = parseInt(hex.slice(2,4),16)/255, b = parseInt(hex.slice(4,6),16)/255;
-      return 0.299*r + 0.587*g + 0.114*b;
-    }
-    function enforceDark(hex, maxLum = 0.12) {
-      if (!hex || !hex.startsWith('#')) return '#07060e';
-      const lum = perceivedLum(hex);
-      if (lum <= maxLum) return hex;
-      const f = maxLum / lum;
-      const hx = hex.replace('#','').padEnd(6,'0');
-      const r = Math.round(parseInt(hx.slice(0,2),16)*f);
-      const g = Math.round(parseInt(hx.slice(2,4),16)*f);
-      const b = Math.round(parseInt(hx.slice(4,6),16)*f);
-      return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');
-    }
+    let config = {};
+    let votes = {};
+    let previousRanks = {};
+    let lastTotal = 0;
 
-    /* ── THEME ── */
-    function applyTheme(t) {
-      if (!t) return; const r = document.documentElement;
-      r.style.setProperty('--acc', t.accent || '#c4973a');
-      r.style.setProperty('--acc2', t.accent2 || '#e8d5a3');
-      const safeBg = enforceDark(t.bg || '#07060e');
-      r.style.setProperty('--bg', safeBg);
-      document.body.style.background = safeBg;
-      r.style.setProperty('--surface', enforceDark(t.surface || '#0d0c1a', 0.18));
-      r.style.setProperty('--cardBg', enforceDark(t.cardBg || '#0e0d1c', 0.16));
-      r.style.setProperty('--text', t.text || '#ede9e0');
-      buildAurora();
-    }
-
-    /* ── AURORA CANVAS ── */
-    let auroraCtx = null, auroraT = 0, stars = [];
-    function buildAurora() {
-      const c = document.getElementById('auroraCanvas'); if (!c) return;
-      if (!auroraCtx) {
-        auroraCtx = c.getContext('2d'); c.width = 1920; c.height = 1080;
-        stars = Array.from({ length: 220 }, () => ({ x: Math.random() * 1920, y: Math.random() * 1080, r: Math.random() * 1.6 + .2, a: Math.random() * .5 + .05, da: (Math.random() - .5) * .004, vx: (Math.random() - .5) * .06, vy: (Math.random() - .5) * .04 }));
-        (function loop() {
-          auroraT += .005;
-          const style = getComputedStyle(document.documentElement);
-          const acc = style.getPropertyValue('--acc').trim() || '#c4973a';
-          const bgColor = style.getPropertyValue('--bg').trim() || '#07060e';
-          auroraCtx.globalAlpha = 1;
-          auroraCtx.fillStyle = bgColor;
-          auroraCtx.fillRect(0, 0, 1920, 1080);
-          const hx = acc.replace('#', '').padEnd(6,'0');
-          const ar = parseInt(hx.substring(0, 2), 16), ag = parseInt(hx.substring(2, 4), 16), ab = parseInt(hx.substring(4, 6), 16);
-          for (let layer = 0; layer < 4; layer++) {
-            const phase = auroraT + layer * 1.4;
-            const yBase = 180 + layer * 100 + Math.sin(phase * .6) * 70;
-            const grad = auroraCtx.createLinearGradient(0, yBase - 140, 0, yBase + 140);
-            const alpha = [.055, .04, .03, .02][layer];
-            grad.addColorStop(0, 'transparent');
-            grad.addColorStop(.35, `rgba(${ar},${ag},${ab},${alpha})`);
-            grad.addColorStop(.65, `rgba(${Math.min(ar + 20, 255)},${ag},${Math.min(ab + 30, 255)},${alpha * .7})`);
-            grad.addColorStop(1, 'transparent');
-            auroraCtx.beginPath(); auroraCtx.moveTo(0, yBase);
-            for (let x = 0; x <= 1920; x += 6) { const y = yBase + Math.sin(x * .0025 + phase) * 60 + Math.sin(x * .006 + phase * 1.4) * 28; auroraCtx.lineTo(x, y); }
-            auroraCtx.lineTo(1920, 1080); auroraCtx.lineTo(0, 1080); auroraCtx.closePath();
-            auroraCtx.fillStyle = grad; auroraCtx.fill();
-          }
-          stars.forEach(s => {
-            s.x += s.vx; s.y += s.vy; s.a += s.da;
-            if (s.a < .03 || s.a > .65) s.da *= -1;
-            if (s.x < -2) s.x = 1922; if (s.x > 1922) s.x = -2; if (s.y < -2) s.y = 1082; if (s.y > 1082) s.y = -2;
-            auroraCtx.beginPath(); auroraCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-            auroraCtx.fillStyle = acc; auroraCtx.globalAlpha = s.a * 0.4; auroraCtx.fill();
-          });
-          auroraCtx.globalAlpha = 1;
-          requestAnimationFrame(loop);
-        })();
-      }
-    }
-
-    /* ── PARTICLES ── */
-    function spawnParticles(n = 40, x0 = null) {
-      const layer = document.getElementById('partLayer');
-      const cols = ['var(--acc)', 'var(--acc2)', '#fff8e0', '#ffffff', 'rgba(255,255,255,.6)'];
-      for (let i = 0; i < n; i++) {
-        const p = document.createElement('div'); p.className = 'part';
-        const c = cols[Math.floor(Math.random() * cols.length)];
-        const x = x0 != null ? x0 + (Math.random() - .5) * 200 : Math.random() * 1920;
-        const dur = Math.random() * 2 + 1, drift = (Math.random() - .5) * 400, sz = Math.random() * 11 + 3;
-        p.style.cssText = `left:${x}px;bottom:0;width:${sz}px;height:${sz}px;background:${c};border-radius:${Math.random() > .4 ? '50%' : '3px'};animation:partRise ${dur}s ease-out forwards;--d:${drift}px;animation-delay:${Math.random() * .6}s`;
-        layer.appendChild(p); setTimeout(() => p.remove(), (dur + 1) * 1000);
-      }
-    }
-
-    /* ── VOTE FLASH ── */
-    function flashVote() {
-      const el = document.getElementById('voteFlash'); if (!el) return;
-      el.classList.add('active'); clearTimeout(vFTO);
-      vFTO = setTimeout(() => el.classList.remove('active'), 800);
-      const tc = document.getElementById('totalCount');
-      if (tc) { tc.classList.remove('count-pop'); void tc.offsetWidth; tc.classList.add('count-pop'); }
-    }
-
-    /* ── SPOTLIGHT PULSE ── */
-    function triggerSpotlight() {
-      const sp = document.getElementById('spotlightLayer');
-      if (!sp) return;
-      sp.classList.remove('active');
-      void sp.offsetWidth;
-      sp.classList.add('active');
-      setTimeout(() => sp.classList.remove('active'), 2200);
-    }
-
-    /* ── WINNER REVEAL ── */
-    function showWinnerReveal(name, subtitle, pct, catName) {
-      const ov = document.getElementById('winnerOverlay');
-      if (!ov) return;
-      ov.querySelector('.wo-name').textContent = name;
-      ov.querySelector('.wo-subtitle').textContent = subtitle || '';
-      ov.querySelector('.wo-pct').textContent = pct + '%';
-      ov.querySelector('.wo-cat').textContent = catName || '';
-      ov.classList.remove('show');
-      void ov.offsetWidth;
-      ov.classList.add('show');
-      spawnParticles(120);
-      triggerSpotlight();
-      setTimeout(() => ov.classList.remove('show'), 8000);
-    }
-
-    /* ── CATEGORY WIPE TRANSITION ── */
-    function triggerCategoryWipe(cb) {
-      const wipe = document.getElementById('categoryWipe');
-      if (!wipe) { cb && cb(); return; }
-      wipe.classList.add('active');
-      setTimeout(() => { cb && cb(); }, 350);
-      setTimeout(() => wipe.classList.remove('active'), 900);
-    }
-
-    /* ── CONNECTION STATUS ── */
-    function setConnectionStatus(ok) {
-      connectionOk = ok;
-      const dot = document.getElementById('connDot');
-      if (dot) dot.className = 'conn-dot ' + (ok ? 'ok' : 'err');
-    }
-
-    /* ── RESOLVE CAT ── */
-    function resolveCat(config, votes, catId) {
-      const sid = config.sessionId || 'default', sv = votes[sid] || {};
-      if (config.categories && config.categories.length > 0) {
-        const cat = config.categories.find(c => c.id === catId) || config.categories[0];
-        const cv = sv['cat_' + cat.id] || {};
-        return { cat, cands: [...(cat.candidates || [])].map(c => ({ ...c, count: cv[c.id] || 0 })).sort((a, b) => b.count - a.count), total: Object.values(cv).reduce((s, v) => s + v, 0) };
-      }
-      const lv = sv.votes || {};
-      return { cat: { id: 'default', name: config.title || 'Votação' }, cands: [...(config.candidates || [])].map(c => ({ ...c, count: lv[c.id] || 0 })).sort((a, b) => b.count - a.count), total: Object.values(lv).reduce((s, v) => s + v, 0) };
-    }
-
-    /* ── MAIN RENDER ── */
-    function render(config, votes) {
-      if (!config) return;
-      applyTheme(config.theme);
-      const bc = config.broadcast || {};
-      const catId = bc.catId || config.activeCategory || config.categories?.[0]?.id || 'default';
+    function applyTheme(theme) {
+      if (!theme) return;
+      const root = document.documentElement;
+      root.style.setProperty('--bg', theme.bg || '#030014');
+      root.style.setProperty('--surface', theme.surface || 'rgba(255, 255, 255, 0.05)');
+      root.style.setProperty('--accent', theme.accent || '#ff007a');
+      root.style.setProperty('--accent-alt', theme.accent2 || '#00d2ff');
+      root.style.setProperty('--text', theme.text || '#ffffff');
+      root.style.setProperty('--font-display', theme.fontDisplay || "'Outfit', sans-serif");
       
-      if (bc.suspense) {
-        document.getElementById('scaleRoot').classList.add('suspense');
-      } else {
-        document.getElementById('scaleRoot').classList.remove('suspense');
-      }
-
-      if (bc.cleanMode !== false) { document.body.classList.add('mode-clean'); } else { document.body.classList.remove('mode-clean'); }
-      const catChanged = prevCatId !== null && prevCatId !== catId;
-      prevCatId = catId;
-
-      const { cat, cands, total } = resolveCat(config, votes, catId);
-      const catLabel = bc.customLabel || config.title || cat.name;
-
-      if (bc.trigger_confetti && bc.trigger_confetti > lastConfetti) {
-        lastConfetti = bc.trigger_confetti;
-        confetti({ particleCount: 200, spread: 140, origin: { y: 0.1 }, zIndex: 9999, colors: ['#c4973a','#e8d5a3','#ffffff'] });
-      }
-      if (bc.trigger_winner && bc.trigger_winner > lastWinner) {
-        lastWinner = bc.trigger_winner;
-        if (cands.length > 0) {
-          const pct = total > 0 ? (cands[0].count / total * 100).toFixed(1) : 0;
-          showWinnerReveal(cands[0].name, cands[0].subtitle || '', pct, catLabel);
-        }
-      }
-      if (bc.trigger_closed && bc.trigger_closed > lastClosed) {
-        lastClosed = bc.trigger_closed;
-        const ov = document.createElement('div');
-        ov.className = 'closed-stamp';
-        ov.innerHTML = '<div class="c-stamp-text">VOTAÇÃO ENCERRADA</div>';
-        document.getElementById('scaleRoot').appendChild(ov);
-        setTimeout(() => ov.classList.add('show'), 100);
-        setTimeout(() => { ov.classList.remove('show'); setTimeout(()=>ov.remove(), 1000); }, 6000);
-      }
-
-      const isOpen = config.votingOpen || false;
-      const revealed = Math.min(bc.revealed ?? 0, cands.length);
-      const showSpoke = bc.showSpokesperson !== false;
-      const layout = bc.layout || 'split';
-      const rowStyle = bc.rowStyle || 'card';
-      const showPhotos = bc.showPhotos !== false;
-      const showBars = bc.showBars !== false;
-      const showPct = bc.showPct !== false;
-      const showCount = bc.showCount !== false;
-      const showLive = bc.showLiveVotes !== false;
-      const showClock = bc.showClock !== false;
-      const showStatus = bc.showStatus !== false;
-      const eyebrowText = bc.eyebrowText || 'Resultados em Tempo Real';
-      const footerText = bc.footerText || 'vote.grupoarmindo.me';
-
-      const prevT = pTot[cat.id] || 0;
-      if (total > prevT && revealed >= cands.length) flashVote();
-      pTot[cat.id] = total;
-      if (cands.length > 0 && cands[0].count > 0) {
-        prevLeader = cands[0].name;
-      }
-
-      const prevRevealedCount = parseInt(document.getElementById('bc_prev_revealed')?.value || '0');
-      const isFirstReveal = revealed > prevRevealedCount && revealed === cands.length;
-      if (document.getElementById('bc_prev_revealed')) document.getElementById('bc_prev_revealed').value = revealed;
-      if (isFirstReveal && !winnerShown && cands.length > 0 && cands[0].count > 0) {
-        winnerShown = true;
-        const pct = total > 0 ? (cands[0].count / total * 100).toFixed(1) : 0;
-        setTimeout(() => showWinnerReveal(cands[0].name, cands[0].subtitle || '', pct, catLabel), 600);
-      }
-
-      document.getElementById('bcTitle').textContent = config.title || 'VOTAÇÃO';
-      document.getElementById('bcEyebrow').textContent = eyebrowText;
-      document.getElementById('liveDot').className = 'live-dot' + (isOpen ? ' on' : ' off');
-      const stag = document.getElementById('statusTag');
-      stag.textContent = isOpen ? 'AO VIVO' : 'ENCERRADO'; stag.className = 'status-tag' + (isOpen ? ' live' : '');
-
-      if (showLive) { animCount(document.getElementById('totalCount'), pTot['__d'] || 0, total); pTot['__d'] = total; document.getElementById('totalBox').style.display = 'flex'; }
-      else document.getElementById('totalBox').style.display = 'none';
-
-      document.querySelectorAll('.bc-clock-wrap').forEach(el => el.style.display = showClock ? '' : 'none');
-      document.getElementById('statusTag').style.display = showStatus ? '' : 'none';
-      document.getElementById('liveDot').style.display = showStatus ? '' : 'none';
-      document.getElementById('bbUrl').textContent = footerText;
-
-      const stage = document.getElementById('mainStage');
-      stage.className = 'stage layout-' + layout;
-      const sa = document.getElementById('spokeArea');
-      sa.style.display = (showSpoke && layout !== 'full') ? 'flex' : 'none';
-      const sn = bc.spokespersonName || '', sr = bc.spokespersonRole || '';
-      document.getElementById('spokeName').textContent = sn;
-      document.getElementById('spokeRole').textContent = sr;
-      document.getElementById('spokeNameplate').style.display = (sn || sr) ? 'flex' : 'none';
-
-      const doRender = () => {
-        document.getElementById('bcCatLabel').textContent = catLabel;
-        document.getElementById('bbMid').textContent = catLabel;
-        if (catChanged) winnerShown = false;
-        renderRows(cands, total, revealed, bc.highlightLeader !== false, rowStyle, showPhotos, showBars, showPct, showCount);
-      };
-      if (catChanged) {
-        triggerCategoryWipe(doRender);
-      } else {
-        doRender();
-      }
+      const acc1 = theme.accent || '#ff007a';
+      const acc2 = theme.accent2 || '#00d2ff';
+      root.style.setProperty('--euro-gradient', `linear-gradient(135deg, ${acc1} 0%, #7000ff 50%, ${acc2} 100%)`);
     }
 
-    function renderRows(cands, total, revealed, hlLeader, style, showPhotos, showBars, showPct, showCount) {
-      const container = document.getElementById('rowsContainer');
-      const prevShown = container.querySelectorAll('.bc-row:not(.bc-row--hidden)').length;
-      const newReveal = revealed > prevShown;
-      container.innerHTML = '';
-      container.className = 'rows-container style-' + style;
-      const rev = [...cands].reverse();
-      rev.forEach((c, idx) => {
-        const rank = cands.length - idx, pct = total > 0 ? (c.count / total * 100).toFixed(1) : 0;
-        const isShown = idx < revealed, isLeader = rank === 1 && hlLeader && c.count > 0;
-        const isNew = isShown && idx === revealed - 1 && newReveal;
-        const row = document.createElement('div');
-        row.className = 'bc-row style-' + style + (isLeader ? ' bc-row--leader' : '') + (!isShown ? ' bc-row--hidden' : '') + (isNew ? ' bc-row--new' : '');
-        row.style.setProperty('--ri', idx);
-        if (style === 'flag') {
-          row.innerHTML = `
-            <div class="bc-row-flag-num">${isLeader ? '◆' : String(rank).padStart(2, '0')}</div>
-            ${showPhotos ? `<div class="bc-row-flag-photo">${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="bc-initial">${c.name.charAt(0)}</div>`}</div>` : ''}
-            <div class="bc-row-flag-body">
-              <div class="bc-row-flag-name">${c.name}${c.subtitle ? `<span class="bc-row-flag-sub"> · ${c.subtitle}</span>` : ''}</div>
-              ${showBars ? `<div class="bc-row-bar"><div class="bc-row-fill" data-pct="${pct}" style="width:0%"></div></div>` : ''}
+    function renderResults() {
+      const candidates = config.candidates || [];
+      if (!candidates.length) return;
+
+      const sorted = [...candidates]
+        .map(c => ({ ...c, count: votes[c.id] || 0 }))
+        .sort((a, b) => b.count - a.count);
+
+      const total = sorted.reduce((s, c) => s + c.count, 0);
+
+      animateCounter(document.getElementById('totalCount'), lastTotal, total, 1000);
+      lastTotal = total;
+
+      const grid = document.getElementById('resultsGrid');
+      grid.innerHTML = '';
+
+      sorted.forEach((c, i) => {
+        const pct = total ? (c.count / total * 100) : 0;
+        const isWinner = i === 0 && !config.votingOpen;
+        const item = document.createElement('div');
+        item.className = 'result-item' + (isWinner ? ' winner' : '');
+        item.style.animationDelay = (i * 0.15) + 's';
+
+        item.innerHTML = `
+        <div class="result-card-inner">
+          <div class="rank-label">#${i + 1}</div>
+          <div class="photo-container">
+            ${c.photo ? `<img src="${c.photo}" class="photo"/>` : `<div class="photo-placeholder">${c.name.charAt(0)}</div>`}
+            <div class="overlay-gradient"></div>
+          </div>
+          <div class="result-info-box">
+            <div class="name-row">
+              <span class="candidate-name">${c.name}</span>
+              <span class="vote-pct-text">${pct.toFixed(1)}%</span>
             </div>
-            <div class="bc-row-flag-score">
-              ${showCount ? `<div class="bc-row-count">${c.count.toLocaleString('pt-PT')}</div>` : ''}
-              ${showPct ? `<div class="bc-row-pct">${pct}%</div>` : ''}
-            </div>`;
-        } else if (style === 'line') {
-          row.innerHTML = `
-            <div class="bc-row-rank">${isLeader ? '◆' : String(rank).padStart(2, '0')}</div>
-            ${showPhotos ? `<div class="bc-row-photo">${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="bc-initial">${c.name.charAt(0)}</div>`}</div>` : ''}
-            <div class="bc-row-name-inline">${c.name}${c.subtitle ? `<span class="bc-row-sub-inline"> ${c.subtitle}</span>` : ''}</div>
-            <div class="bc-row-line-fill-wrap">${showBars ? `<div class="bc-row-line-fill" data-pct="${pct}" style="width:0%"></div>` : ''}</div>
-            ${showCount ? `<div class="bc-row-count-inline">${c.count.toLocaleString('pt-PT')}</div>` : ''}
-            ${showPct ? `<div class="bc-row-pct-inline">${pct}%</div>` : ''}`;
-        } else {
-          row.innerHTML = `
-            <div class="bc-row-rank">${isLeader ? '◆' : String(rank).padStart(2, '0')}</div>
-            ${showPhotos ? `<div class="bc-row-photo">${c.photo ? `<img src="${c.photo}" alt="${c.name}"/>` : `<div class="bc-initial">${c.name.charAt(0)}</div>`}</div>` : ''}
-            <div class="bc-row-info">
-              <div class="bc-row-name">${c.name}</div>
-              ${c.subtitle ? `<div class="bc-row-sub">${c.subtitle}</div>` : ''}
-              ${showBars ? `<div class="bc-row-bar"><div class="bc-row-fill" data-pct="${pct}" style="width:0%"></div></div>` : ''}
+            <div class="bar-track">
+              <div class="bar-fill" style="width: ${pct}%"></div>
             </div>
-            <div class="bc-row-score">
-              ${showCount ? `<div class="bc-row-count">${c.count.toLocaleString('pt-PT')}</div>` : ''}
-              ${showPct ? `<div class="bc-row-pct">${pct}%</div>` : ''}
-            </div>`;
-        }
-        container.appendChild(row);
-        if (isShown) setTimeout(() => { const b = row.querySelector('.bc-row-fill,.bc-row-line-fill'); if (b) b.style.width = pct + '%'; }, 80);
-        if (isNew && isLeader) setTimeout(() => spawnParticles(55), 250);
+            <div class="vote-count-label">${c.count} votos</div>
+          </div>
+        </div>
+      `;
+        grid.appendChild(item);
       });
     }
 
-    onValue(ref(db, 'config'), snap => { cfg = snap.val() || {}; render(cfg, vts); setConnectionStatus(true); }, err => setConnectionStatus(false));
-    onValue(ref(db, 'sessions'), snap => { vts = snap.val() || {}; if (cfg) render(cfg, vts); setConnectionStatus(true); }, err => setConnectionStatus(false));
-    document.addEventListener('DOMContentLoaded', () => { startClock(); buildAurora(); });
+    function animateCounter(el, from, to, duration) {
+      if (from === to) { el.textContent = to; return; }
+      const start = performance.now();
+      const diff = to - from;
+      function tick(now) {
+        const elapsed = now - start;
+        const progress = Math.min(elapsed / duration, 1);
+        const ease = 1 - Math.pow(1 - progress, 3);
+        el.textContent = Math.round(from + diff * ease);
+        if (progress < 1) requestAnimationFrame(tick);
+        else el.textContent = to;
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function updateStatus(isOpen) {
+      const dot = document.getElementById('statusDot');
+      const txt = document.getElementById('statusText');
+      const liveBadge = document.getElementById('liveBadge');
+      if (dot) dot.className = 'dot ' + (isOpen ? 'open' : 'closed');
+      if (txt) {
+        txt.textContent = isOpen ? 'Votação Aberta' : 'Votação Encerrada';
+        txt.style.color = isOpen ? '#4ade80' : '#ef4444';
+      }
+      // Badge removed
+    }
+
+    let countdownInterval = null;
+
+    onValue(ref(db, 'config'), (snap) => {
+      config = snap.val() || {};
+      applyTheme(config.theme);
+      document.getElementById('eventTitle').textContent = config.title || 'Resultados';
+      document.getElementById('eventSubtitle').textContent = config.subtitle || '';
+      updateStatus(config.votingOpen || false);
+      
+      const votingOpen = config.votingOpen || false;
+      const opTime = config.openingTime;
+
+      if (!votingOpen && opTime && new Date(opTime) > new Date()) {
+        document.getElementById('resultsGrid').style.display = 'none';
+        document.getElementById('countdownScreen').style.display = 'flex';
+        startCountdown(opTime);
+      } else {
+        document.getElementById('resultsGrid').style.display = 'grid';
+        document.getElementById('countdownScreen').style.display = 'none';
+        clearInterval(countdownInterval);
+        renderResults();
+      }
+    });
+
+    function startCountdown(endTimeStr) {
+      clearInterval(countdownInterval);
+      const endTime = new Date(endTimeStr).getTime();
+      const update = () => {
+        const diff = endTime - new Date().getTime();
+        if (diff <= 0) { clearInterval(countdownInterval); location.reload(); return; }
+        const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const s = Math.floor((diff % (1000 * 60)) / 1000);
+        document.getElementById('obs-cd-d').textContent = String(d).padStart(2, '0');
+        document.getElementById('obs-cd-h').textContent = String(h).padStart(2, '0');
+        document.getElementById('obs-cd-m').textContent = String(m).padStart(2, '0');
+        document.getElementById('obs-cd-s').textContent = String(s).padStart(2, '0');
+      };
+      update();
+      countdownInterval = setInterval(update, 1000);
+    }
+
+    onValue(ref(db, 'votes'), (snap) => {
+      votes = snap.val() || {};
+      renderResults();
+      setTimeout(() => {
+        document.querySelectorAll('.bar').forEach(bar => {
+          bar.style.width = bar.style.getPropertyValue('--target-w') || '0%';
+        });
+      }, 100);
+    });
   </script>
-  <link rel="stylesheet" href="obs.css" />
+
+  <style>
+    :root {
+      --bg: #05070a;
+      --surface: #0f1218;
+      --accent: #0055ff;
+      --accent-alt: #00d2ff;
+      --text: #ffffff;
+      --font-display: 'Inter', sans-serif;
+      --font-body: 'Inter', sans-serif;
+      --euro-gradient: linear-gradient(90deg, var(--accent) 0%, #0033aa 100%);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      background: #04061a;
+    }
+    body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: transparent;
+      color: var(--text);
+      font-family: var(--font-body);
+    }
+
+    /* WAVE BG CANVAS */
+    #waveBgCanvas {
+      position: fixed;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      z-index: -1;
+      pointer-events: none;
+      display: block;
+    }
+
+    .page {
+      width: 1920px;
+      height: 1080px;
+      display: flex;
+      flex-direction: column;
+      padding: 48px 60px 36px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* BACKGROUND EFFECTS REMOVED */
+
+    /* LIVE BADGE */
+    .live-badge {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px 5px 10px;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 100px;
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #ef4444;
+      animation: liveGlow 2s ease infinite;
+      flex-shrink: 0;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      animation: livePulse 1.2s ease infinite;
+    }
+
+    @keyframes livePulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(0.7);
+      }
+    }
+
+    @keyframes liveGlow {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+      }
+
+      50% {
+        box-shadow: 0 0 16px 0 rgba(239, 68, 68, 0.15);
+      }
+    }
+
+    /* HEADER */
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 28px;
+      background: transparent;
+      color: var(--text);
+      font-family: var(--font-main);
+      overflow: hidden;
+    }
+
+    /* ── OBS WRAPPER ── */
+    #obs-container {
+      position: absolute;
+      top: 50px;
+      left: 50px;
+      width: 600px;
+      background: color-mix(in srgb, var(--surface) 60%, transparent);
+      backdrop-filter: blur(32px) saturate(1.5);
+      border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+      border-radius: 28px;
+      padding: 36px 40px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    /* ── HEADER ── */
+    .obs-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 24px;
+    }
+
+    .obs-title {
+      font-family: var(--font-display);
+      font-size: 2.2rem;
+      font-weight: 900;
+      line-height: 1.1;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    
+    .obs-subtitle {
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 6px;
+    }
+
+    .obs-total-wrap {
+      text-align: right;
+    }
+
+    .obs-total-num {
+      font-size: 3rem;
+      font-weight: 900;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .obs-total-label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 4px;
+    }
+
+    .rank-row {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 16px;
+      padding: 12px 20px;
+      margin-bottom: 12px;
+      position: absolute;
+      width: 100%;
+      transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+    }
+
+    .rank-row.is-first {
+      background: color-mix(in srgb, var(--accent) 15%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+
+    .rank-pos {
+      font-size: 1.6rem;
+      font-weight: 900;
+      color: var(--text-muted);
+      width: 24px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .rank-row.is-first .rank-pos { color: var(--accent); }
+
+    .rank-photo-wrap {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      overflow: hidden;
+      background: rgba(255,255,255,0.05);
+      flex-shrink: 0;
+      border: 2px solid transparent;
+    }
+
+    .rank-row.is-first .rank-photo-wrap {
+      border-color: var(--accent);
+    }
+
+    .rank-photo { width: 100%; height: 100%; object-fit: cover; }
+
+    .rank-info { flex: 1; min-width: 0; }
+    
+    .rank-name {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.1;
+    }
+
+    .rank-bar-wrap {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+
+    .rank-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      transition: width 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+    }
+
+    .rank-votes {
+      font-size: 1.8rem;
+      font-weight: 900;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      line-height: 1;
+    }
+    .rank-votes-lbl {
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      text-align: right;
+      margin-top: 4px;
+    }
+
+    /* NO DATA */
+    .no-data {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      flex-direction: column;
+      gap: 16px;
+      color: rgba(255, 255, 255, 0.2);
+    }
+
+    .no-data .icon {
+      font-size: 48px;
+      opacity: 0.4;
+    }
+
+    .no-data p {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-style: italic;
+    }
+    .obs-cd-item {
+      text-align: center;
+    }
+    .obs-cd-val {
+      font-size: 100px;
+      font-weight: 900;
+      line-height: 1;
+      font-family: var(--font-display);
+      background: var(--euro-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .obs-cd-lab {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      opacity: 0.4;
+      margin-top: 10px;
+    }
+  </style>
 </head>
 
 <body>
-  <div id="scaleRoot">
-    <div class="cinematic-bar-top"></div>
-    <div class="letterbox-line-top"></div>
-    <div class="cinematic-bar-bottom"></div>
-    <div class="letterbox-line-bottom"></div>
-    <canvas id="auroraCanvas"></canvas>
-    <div class="bg-vig"></div>
-    <div class="bg-scan"></div>
-    <div class="top-accent"></div>
-    <div class="brk brk-tl"></div>
-    <div class="brk brk-tr"></div>
-    <div class="brk brk-bl"></div>
-    <div class="brk brk-br"></div>
-    <div id="voteFlash"></div>
-    <div id="partLayer"></div>
-    <div id="stageRim"></div>
-    <div id="spotlightLayer"></div>
-    <div id="categoryWipe"></div>
-    <div class="conn-dot ok" id="connDot"></div>
-    <input type="hidden" id="bc_prev_revealed" value="0" />
+  <!-- Wave Background Canvas -->
+  <canvas id="waveBgCanvas" aria-hidden="true"></canvas>
+  <script>
+  (function(){
+    const canvas = document.getElementById('waveBgCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width=1920; canvas.height=1080;
+    
+    let C = { bg0:'#04061a', bg1:'#060824', glow0:'#FF1A8C', glow1:'#9b10b0' };
+    
+    function hexRGB(h) {
+      if (!h || typeof h !== 'string') return [0,0,0];
+      h = h.replace('#','');
+      if (h.length===3) h = h.split('').map(c=>c+c).join('');
+      if (h.length!==6) return [0,0,0];
+      const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+      return (isNaN(r)||isNaN(g)||isNaN(b)) ? [0,0,0] : [r,g,b];
+    }
+    function hexToRgba(h, a) {
+      const [r,g,b] = hexRGB(h);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    function lerpColor(c1,c2,t) {
+      const a=hexRGB(c1),b=hexRGB(c2);
+      return `rgb(${Math.round(a[0]+(b[0]-a[0])*t)},${Math.round(a[1]+(b[1]-a[1])*t)},${Math.round(a[2]+(b[2]-a[2])*t)})`;
+    }
 
-    <div id="winnerOverlay">
-      <div class="wo-eyebrow">🏆 &nbsp; Vencedor &nbsp; 🏆</div>
-      <div class="wo-card">
-        <div class="wo-crown">👑</div>
-        <div class="wo-name"></div>
-        <div class="wo-subtitle"></div>
-        <div class="wo-stats">
-          <div class="wo-pct-wrap">
-            <div class="wo-pct"></div>
-            <div class="wo-pct-label">dos votos</div>
-          </div>
+    let W = 1920, H = 1080;
+
+    function draw(ts){
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0,0,W,H);
+      
+      // Deep background gradient
+      const bgGrad=ctx.createLinearGradient(0,0,W,H);
+      bgGrad.addColorStop(0, C.bg0);
+      bgGrad.addColorStop(0.6, C.bg1);
+      bgGrad.addColorStop(1, hexToRgba(C.glow0, 0.15));
+      ctx.fillStyle=bgGrad; 
+      ctx.fillRect(0,0,W,H);
+
+      const time = ts * 0.0002;
+
+      // Glowing Orbs
+      ctx.globalCompositeOperation = 'screen';
+      function drawOrb(x, y, r, color, alpha) {
+          const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+          grad.addColorStop(0, hexToRgba(color, alpha));
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      const pulse = Math.sin(time * 2);
+      drawOrb(W*0.1, H*0.9, W*0.5, C.glow0, 0.45 + 0.1*pulse);
+      drawOrb(W*0.9, H*0.1, W*0.5, C.glow1, 0.35 - 0.1*pulse);
+      
+      // Topographic Eurovision Waves
+      ctx.globalCompositeOperation = 'source-over';
+      const NUM_LINES = 45;
+      ctx.lineWidth = 1.8;
+      
+      for(let i=0; i<NUM_LINES; i++) {
+          const p = i / (NUM_LINES - 1);
+          
+          // More color variations: weave the colors dynamically
+          const colorMix = (Math.sin(p * Math.PI * 4 + time * 1.2) * 0.5 + 0.5);
+          ctx.strokeStyle = lerpColor(C.glow0, C.glow1, colorMix);
+          
+          // Fade lines at edges, lower max opacity
+          const edgeFade = Math.sin(p * Math.PI);
+          ctx.globalAlpha = edgeFade * 0.45;
+          
+          ctx.beginPath();
+          for(let x=0; x<=W+20; x+=20) {
+              const nx = x * 0.0009;
+              const ny = p * 3.5;
+              
+              const n1 = Math.sin(nx*2.1 + ny*1.4 - time*1.2) * Math.cos(nx*0.9 - ny*1.1 + time*1.1);
+              const n2 = Math.sin(nx*3.4 - ny*2.3 + time*1.8) * Math.cos(nx*1.4 + ny*1.9 - time*1.4) * 0.5;
+              const n3 = Math.sin(nx*0.7 + ny*0.6 + time*0.7) * 1.2;
+              const noise = n1 + n2 + n3;
+              
+              const yBase = H * -0.2 + (H * 1.4) * p + (x * -0.15);
+              const amp = H * 0.12 * (0.5 + 0.5 * edgeFade);
+              
+              const y = yBase + noise * amp;
+              if(x===0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+      }
+      
+      // Accessibility Overlay
+      ctx.globalCompositeOperation = 'source-over';
+      const accGrad = ctx.createRadialGradient(W*0.5, H*0.4, 0, W*0.5, H*0.4, Math.max(W,H)*0.6);
+      accGrad.addColorStop(0, 'rgba(0,0,0,0.55)');
+      accGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = accGrad;
+      ctx.fillRect(0,0,W,H);
+      
+      requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+
+    function darkenColor(h, factor) {
+      const [r,g,b] = hexRGB(h);
+      return `rgb(${Math.round(r*factor)},${Math.round(g*factor)},${Math.round(b*factor)})`;
+    }
+
+    window._waveRenderer={
+      updateColors(a,a2){
+        C.glow0=a||C.glow0;
+        C.glow1=a2||C.glow1;
+        C.bg0=darkenColor(C.glow0, 0.08);
+        C.bg1=darkenColor(C.glow1, 0.12);
+      }
+    };
+  })();
+  </script>
+
+  <div class="page">
+
+    <header class="header">
+      <div>
+        <div class="header-left">
+          <div class="event-title" id="eventTitle">Resultados</div>
         </div>
-        <div class="wo-cat"></div>
+        <div class="obs-subtitle" id="eventSubtitle">Sistema de Votação</div>
+      </div>
+      <div class="header-right">
+        <div class="total-votes-box">
+          <div class="total-label">Total de Votos</div>
+          <div class="total-number" id="totalCount">0</div>
+        </div>
+        <div class="status-row">
+          <div class="dot" id="statusDot"></div>
+          <span id="statusText">—</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="divider"></div>
+
+    <div id="resultsGrid"></div>
+
+    <div id="countdownScreen" style="display:none; flex:1; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+      <div style="font-size: 1.2rem; letter-spacing: 0.3em; text-transform: uppercase; opacity: 0.5; margin-bottom: 40px; font-weight: 700;">Abertura da Votação em</div>
+      <div style="display: flex; gap: 40px; justify-content: center;">
+        <div class="obs-cd-item"><div id="obs-cd-d" class="obs-cd-val">00</div><div class="obs-cd-lab">Dias</div></div>
+        <div class="obs-cd-item"><div id="obs-cd-h" class="obs-cd-val">00</div><div class="obs-cd-lab">Horas</div></div>
+        <div class="obs-cd-item"><div id="obs-cd-m" class="obs-cd-val">00</div><div class="obs-cd-lab">Mins</div></div>
+        <div class="obs-cd-item"><div id="obs-cd-s" class="obs-cd-val">00</div><div class="obs-cd-lab">Segs</div></div>
       </div>
     </div>
 
-    <!-- LEADER BANNER REMOVED BY USER REQUEST -->
+    <footer class="footer">
+      <div class="footer-brand">GRUPO ARMINDO · SISTEMA DE VOTAÇÃO · RESULTADOS AO VIVO</div>
+      <div class="footer-time" id="footerTime"></div>
+    </footer>
 
-    <div class="stage layout-split" id="mainStage">
-      <div class="topbar">
-        <div class="tb-l">
-          <span class="tb-brand">Grupo Armindo</span>
-          <div class="tb-pipe"></div>
-          <span id="bcTitle">VOTAÇÃO</span>
-        </div>
-        <div class="tb-r">
-          <div id="totalBox" style="display:flex">
-            <span class="tb-tn" id="totalCount">0</span>
-            <span class="tb-tl">votos</span>
-          </div>
-          <div class="tb-pipe"></div>
-          <div class="live-dot off" id="liveDot"></div>
-          <span class="status-tag" id="statusTag">ENCERRADO</span>
-          <div class="tb-pipe"></div>
-          <span class="bc-clock bc-clock-wrap"></span>
-        </div>
-      </div>
 
-      <div class="lb-col">
-        <div id="bcEyebrow" class="cat-eyebrow">Resultados em Tempo Real</div>
-        <div id="bcCatLabel">A carregar…</div>
-        <div class="cat-sep">
-          <div class="sep-line"></div>
-          <div class="sep-diamond"></div>
-          <div class="sep-line sep-line-r"></div>
-        </div>
-        <div id="rowsContainer" class="rows-container style-card"></div>
-      </div>
 
-      <div id="spokeArea">
-        <div class="spoke-cam">
-          <div class="spoke-cam-hint">
-            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"
-              stroke-linecap="round">
-              <path d="M23 7l-7 5 7 5V7z" />
-              <rect x="1" y="5" width="15" height="14" rx="2" />
-            </svg>
-            <span>Câmara / Spokesperson</span>
-          </div>
-        </div>
-        <div id="spokeNameplate">
-          <div id="spokeName"></div>
-          <div id="spokeRole"></div>
-        </div>
-      </div>
+    <script>
+      function updateTime() {
+        const now = new Date();
+        document.getElementById('footerTime').textContent =
+          now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+      updateTime();
+      setInterval(updateTime, 1000);
 
-      <div class="bbar">
-        <div class="bb-l">
-          <div class="bb-gem"></div>
-          <span class="bb-brand">Grupo Armindo</span>
-          <div class="bb-pipe"></div>
-          <span class="bb-url" id="bbUrl">vote.grupoarmindo.me</span>
-        </div>
-        <div id="bbMid"></div>
-        <div class="bb-r">
-          <div class="bb-cdot"></div>
-          <span class="bc-clock bc-clock-wrap"
-            style="font-family:'Cinzel',serif;font-size:.66rem;letter-spacing:.1em;color:color-mix(in srgb,var(--text) 24%,transparent)"></span>
-        </div>
-      </div>
-    </div>
-  </div>
+      const observer = new MutationObserver(() => {
+        setTimeout(() => {
+          document.querySelectorAll('.bar').forEach(bar => {
+            const target = bar.style.getPropertyValue('--target-w');
+            if (target) bar.style.width = target;
+          });
+        }, 200);
+      });
+      observer.observe(document.getElementById('resultsGrid'), { childList: true });
+    </script>
 </body>
 
 </html>

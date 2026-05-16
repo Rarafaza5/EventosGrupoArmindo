@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Widget Votos — Thunderous Borders</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;900&display=swap" rel="stylesheet"/>
+
+<style>
+  :root {
+    --accent: #0055ff;
+    --accent2: #00d2ff;
+    --text: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.6);
+    --font-main: 'Outfit', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-main);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .widget {
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
+    backdrop-filter: blur(24px) saturate(1.5);
+    border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+    border-radius: 24px;
+    padding: 24px 32px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 320px;
+  }
+
+  .widget-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .widget-logo {
+    width: 24px;
+    height: 24px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    font-weight: 900;
+    color: white;
+  }
+
+  .widget-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .widget-votes {
+    font-size: 4rem;
+    font-weight: 900;
+    color: var(--text);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .widget-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+  }
+</style>
+</head>
+<body>
+
+  <div class="widget">
+  <div class="widget-brand">
+    <div class="widget-logo">GA</div>
+    <div class="widget-title">Grupo Armindo</div>
+  </div>
+  <div class="widget-votes" id="totalVotes">0</div>
+  <div class="widget-label">Votos</div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyA8azNy6GEgD190y_fW91ahUbKa1w5veik",
+    authDomain: "aawards.firebaseapp.com",
+    databaseURL: "https://aawards-default-rtdb.firebaseio.com",
+    projectId: "aawards",
+    storageBucket: "aawards.firebasestorage.app",
+    messagingSenderId: "839334918366",
+    appId: "1:839334918366:web:454a259fa3e2665b46ea4f",
+    measurementId: "G-NLLMB9THVX"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  let lastTotal = 0;
+  let firstLoad = true;
+
+  function applyTheme(theme) {
+    if (!theme) return;
+    const r = document.documentElement;
+    const acc1 = theme.accent || '#0055ff';
+    r.style.setProperty('--accent', acc1);
+    
+    if (theme.bg === '#ffffff' || theme.bg === '#fff') {
+      document.querySelector('.widget-box').style.background = '#f5f7fa';
+      document.querySelector('.vote-label').style.color = 'rgba(0,0,0,0.5)';
+    } else {
+      document.querySelector('.widget-box').style.background = '#0a0c10';
+      document.querySelector('.vote-label').style.color = 'rgba(255, 255, 255, 0.4)';
+    }
+  }
+
+  onValue(ref(db, 'config'), (snap) => {
+    const data = snap.val();
+    if (data && data.theme) applyTheme(data.theme);
+  });
+
+  onValue(ref(db, 'votes'), (snap) => {
+    const votes = snap.val() || {};
+    const total = Object.values(votes).reduce((a, b) => a + b, 0);
+    
+    const el = document.getElementById('totalVotes');
+    if (total !== lastTotal) {
+      el.textContent = total;
+      lastTotal = total;
+    }
+    firstLoad = false;
+  });
+</script>
+</body>
+</html>
