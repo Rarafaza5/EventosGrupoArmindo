@@ -249,10 +249,23 @@
     const ESC_POINTS = [12, 10, 8, 7, 6, 5, 4, 3, 2, 1];
 
     function renderScoreboard() {
-      const candidates = config.candidates || [];
+      const cats = config.categories || [];
+      const bcCatId = config.broadcast?.catId || (cats[0] && cats[0].id);
+      const activeCat = cats.find(c => c.id === bcCatId) || cats[0];
+      const candidates = activeCat ? (activeCat.candidates || []) : (config.candidates || []);
       const mode = config.broadcastMode || 'votes';
       const revealStatus = config.revealStatus || {};
       const revealActive = config.revealActive || false;
+
+      const grid = document.getElementById('scoreboardGrid');
+      if (grid) {
+        Array.from(grid.children).forEach(child => {
+          const cid = child.id.replace('row-', '');
+          if (!candidates.some(c => c.id === cid)) {
+            child.remove();
+          }
+        });
+      }
 
       // 1. Ordem Inicial (Running Order)
       const initialSorted = [...candidates].sort((a, b) => {
@@ -292,7 +305,6 @@
         return a.originalOrder - b.originalOrder;
       });
 
-      const grid = document.getElementById('scoreboardGrid');
       const maxRows = Math.min(processed.length, 26);
       const half = Math.ceil(maxRows / 2);
       
@@ -330,7 +342,15 @@
 
     onValue(ref(db, 'config'), snap => {
       config = snap.val() || {};
-      document.getElementById('ltEventName').textContent = config.spokespersonRole || '';
+      const cats = config.categories || [];
+      const bcCatId = config.broadcast?.catId || (cats[0] && cats[0].id);
+      const activeCat = cats.find(c => c.id === bcCatId) || cats[0];
+
+      if (activeCat && activeCat.name) {
+        document.getElementById('ltEventName').textContent = activeCat.name;
+      } else {
+        document.getElementById('ltEventName').textContent = config.spokespersonRole || '';
+      }
       document.getElementById('ltSpokesperson').textContent = config.spokesperson || 'Porta-voz';
 
       if (config.theme && config.theme.accent) {
@@ -355,7 +375,9 @@
     });
 
     function showReveal(cid) {
-      const c = (config.candidates || []).find(x => x.id === cid);
+      const cats = config.categories || [];
+      const allCands = cats.length > 0 ? cats.flatMap(c => c.candidates || []) : (config.candidates || []);
+      const c = allCands.find(x => x.id === cid) || (config.candidates || []).find(x => x.id === cid);
       if (!c) return;
       document.getElementById('revealName').textContent = c.name;
       document.getElementById('revealPhoto').src = c.photo || '';

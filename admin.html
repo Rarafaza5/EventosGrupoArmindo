@@ -25,8 +25,12 @@
   const db = getDatabase(app);
 
   let config = {};
+  let categories = [];
+  let activeCatIndex = 0;
   let candidates = [];
   let latestVotes = {};
+  let selectedResultsCat = 'all';
+  let selectedBroadcastCat = 'all';
 
   // ---- AUTH ----
   const ADMIN_PASS = "admin1234";
@@ -79,11 +83,42 @@
   function loadConfig() {
     onValue(ref(db, 'config'), (snap) => {
       config = snap.val() || {};
-      candidates = config.candidates || [];
+      if (config.categories && Array.isArray(config.categories) && config.categories.length > 0) {
+        categories = config.categories.map((cat, i) => ({
+          id: cat.id || `cat_${Date.now()}_${i}`,
+          name: cat.name || `Categoria ${i + 1}`,
+          description: cat.description || '',
+          candidates: Array.isArray(cat.candidates) ? cat.candidates : []
+        }));
+      } else if (config.candidates && Array.isArray(config.candidates) && config.candidates.length > 0) {
+        categories = [{
+          id: 'cat_default',
+          name: config.title || 'Categoria Principal',
+          description: config.subtitle || 'Votação Geral',
+          candidates: config.candidates
+        }];
+      } else {
+        categories = [{
+          id: 'cat_1',
+          name: 'Filme do Ano',
+          description: 'Melhor obra cinematográfica do ano',
+          candidates: []
+        }];
+      }
+
+      if (activeCatIndex >= categories.length) activeCatIndex = 0;
+
+      // Flatten candidates for overall stats / compatibility
+      candidates = categories.flatMap(cat => 
+        (cat.candidates || []).map(c => ({ ...c, categoryId: cat.id, categoryName: cat.name }))
+      );
+
       applyTheme(config.theme);
       populateForm();
+      renderCategoryTabs();
       renderCandidateList();
       renderRevealCandidates();
+      renderResults(latestVotes);
       updateSessionInfo();
     });
 
@@ -281,18 +316,224 @@
     document.querySelector(`[data-preset="${name}"]`)?.classList.add('active');
   };
 
-  // ---- CANDIDATES ----
-  function renderCandidateList() {
-    const list = document.getElementById('candidateList');
-    list.innerHTML = '';
-    if (candidates.length === 0) {
-      list.innerHTML = '<div class="empty-list">Nenhum candidato ainda. Adiciona um abaixo!</div>';
+  // ---- MODAL HELPERS ----
+  function openModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('show');
+  }
+  window.openModal = openModal;
+
+  function closeModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('show');
+  }
+  window.closeModal = closeModal;
+
+  window.handlePhotoUpload = function(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) {
+      alert('Foto muito grande! Máximo: 500KB.');
       return;
     }
-    candidates.forEach((c, i) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const b64 = e.target.result;
+      document.getElementById('c_photoB64').value = b64;
+      document.getElementById('c_photoPreview').src = b64;
+      document.getElementById('c_photoPreview').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  window.handleBannerLogoUpload = function(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) {
+      alert('Logo muito grande! Máximo: 500KB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const b64 = e.target.result;
+      document.getElementById('f_bannerLogoB64').value = b64;
+      document.getElementById('bannerLogoPreview').src = b64;
+      document.getElementById('bannerLogoPreview').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ---- CATEGORIES & CANDIDATES MANAGEMENT ----
+  let editingCategoryIndex = -1;
+  let editingIndex = -1;
+
+  async function saveAllCategoriesToFirebase() {
+    candidates = categories.flatMap(cat =>
+      (cat.candidates || []).map(c => ({ ...c, categoryId: cat.id, categoryName: cat.name }))
+    );
+    await set(ref(db, 'config/categories'), categories);
+    await set(ref(db, 'config/candidates'), candidates);
+  }
+
+  function renderCategoryTabs() {
+    const tabsContainer = document.getElementById('categoryTabs');
+    const metaTitle = document.getElementById('activeCatMetaTitle');
+    const metaDesc = document.getElementById('activeCatMetaDesc');
+    const metaCount = document.getElementById('activeCatMetaCount');
+    if (!tabsContainer) return;
+
+    if (activeCatIndex < 0) activeCatIndex = 0;
+    if (activeCatIndex >= categories.length) activeCatIndex = categories.length - 1;
+    const currentCat = categories[activeCatIndex];
+
+    tabsContainer.innerHTML = categories.map((cat, i) => {
+      const isActive = i === activeCatIndex;
+      const count = (cat.candidates || []).length;
+      return `
+        <button class="admin-cat-tab ${isActive ? 'active' : ''}" onclick="selectCategoryTab(${i})">
+          <span class="admin-cat-tab-icon">${i === 0 ? '🏆' : (i === 1 ? '🎬' : '⭐')}</span>
+          <span class="admin-cat-tab-name">${cat.name}</span>
+          <span class="admin-cat-tab-count">(${count})</span>
+        </button>
+      `;
+    }).join('') + `
+      <button class="admin-cat-tab add-btn" onclick="openAddCategory()">
+        <span>+ Nova Categoria</span>
+      </button>
+    `;
+
+    if (currentCat) {
+      if (metaTitle) metaTitle.textContent = currentCat.name;
+      if (metaDesc) metaDesc.textContent = currentCat.description || 'Sem descrição definida.';
+      if (metaCount) metaCount.textContent = `${(currentCat.candidates || []).length} candidatos nesta categoria`;
+    }
+
+    renderResultsCatFilter();
+    renderBroadcastCatFilter();
+  }
+
+  window.selectCategoryTab = function(i) {
+    activeCatIndex = i;
+    renderCategoryTabs();
+    renderCandidateList();
+  };
+
+  window.openAddCategory = function() {
+    editingCategoryIndex = -1;
+    document.getElementById('categoryModalTitle').textContent = 'Nova Categoria (ex: Óscares)';
+    document.getElementById('cat_name').value = '';
+    document.getElementById('cat_description').value = '';
+    document.getElementById('categoryModal').classList.add('show');
+  };
+
+  window.openEditCategory = function(idx) {
+    editingCategoryIndex = idx !== undefined ? idx : activeCatIndex;
+    const cat = categories[editingCategoryIndex];
+    if (!cat) return;
+    document.getElementById('categoryModalTitle').textContent = 'Editar Categoria';
+    document.getElementById('cat_name').value = cat.name || '';
+    document.getElementById('cat_description').value = cat.description || '';
+    document.getElementById('categoryModal').classList.add('show');
+  };
+
+  window.saveCategory = async function() {
+    const name = document.getElementById('cat_name').value.trim();
+    if (!name) { alert('O nome da categoria é obrigatório!'); return; }
+    const description = document.getElementById('cat_description').value.trim();
+
+    if (editingCategoryIndex >= 0) {
+      categories[editingCategoryIndex].name = name;
+      categories[editingCategoryIndex].description = description;
+      logAction(`Categoria editada: "${name}"`);
+    } else {
+      const newCat = {
+        id: 'cat_' + Date.now(),
+        name,
+        description,
+        candidates: []
+      };
+      categories.push(newCat);
+      activeCatIndex = categories.length - 1;
+      logAction(`Nova categoria criada: "${name}"`);
+    }
+
+    await saveAllCategoriesToFirebase();
+    closeModal('categoryModal');
+    renderCategoryTabs();
+    renderCandidateList();
+    renderResults(latestVotes);
+    renderRevealCandidates();
+    showToast('✅ Categoria guardada com sucesso!');
+  };
+
+  window.removeCategory = async function(idx) {
+    const i = idx !== undefined ? idx : activeCatIndex;
+    const cat = categories[i];
+    if (!cat) return;
+
+    if (categories.length <= 1) {
+      alert('A votação tem de ter pelo menos uma categoria!');
+      return;
+    }
+
+    const candCount = (cat.candidates || []).length;
+    const msg = candCount > 0
+      ? `A categoria "${cat.name}" tem ${candCount} candidato(s).\n\nTens a certeza que queres eliminar esta categoria e todos os seus candidatos?`
+      : `Tens a certeza que queres eliminar a categoria "${cat.name}"?`;
+
+    if (!confirm(msg)) return;
+
+    categories.splice(i, 1);
+    if (activeCatIndex >= categories.length) activeCatIndex = categories.length - 1;
+
+    await saveAllCategoriesToFirebase();
+    logAction(`Categoria removida: "${cat.name}"`);
+    renderCategoryTabs();
+    renderCandidateList();
+    renderResults(latestVotes);
+    renderRevealCandidates();
+    showToast(`🗑️ Categoria "${cat.name}" removida.`);
+  };
+
+  window.moveCategory = async function(dir) {
+    const fromIdx = activeCatIndex;
+    const toIdx = fromIdx + dir;
+    if (toIdx < 0 || toIdx >= categories.length) return;
+
+    const temp = categories[fromIdx];
+    categories[fromIdx] = categories[toIdx];
+    categories[toIdx] = temp;
+    activeCatIndex = toIdx;
+
+    await saveAllCategoriesToFirebase();
+    renderCategoryTabs();
+    renderCandidateList();
+    showToast('↔ Ordem das categorias atualizada!');
+  };
+
+  // ---- CANDIDATE CRUD IN ACTIVE CATEGORY ----
+  function renderCandidateList() {
+    const list = document.getElementById('candidateList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const currentCat = categories[activeCatIndex];
+    if (!currentCat) {
+      list.innerHTML = '<div class="empty-list">Nenhuma categoria selecionada.</div>';
+      return;
+    }
+
+    const catCands = currentCat.candidates || [];
+    if (catCands.length === 0) {
+      list.innerHTML = `<div class="empty-list">Nenhum candidato na categoria "${currentCat.name}". Clica em "+ Adicionar" acima para adicionar concorrentes!</div>`;
+      return;
+    }
+
+    catCands.forEach((c, i) => {
       const item = document.createElement('div');
       item.className = 'candidate-item';
       item.dataset.id = c.id;
+      const votesCount = latestVotes[c.id] || 0;
       item.innerHTML = `
         <div class="c-num">${c.number ? String(c.number).padStart(2,'0') : String(i+1).padStart(2,'0')}</div>
         <div class="c-thumb">
@@ -302,7 +543,7 @@
           <div class="c-name">${c.name || '(sem nome)'}</div>
           <div class="c-sub">${c.subtitle || ''}</div>
         </div>
-        <div class="c-votes-badge" id="votes_${c.id}">0 votos</div>
+        <div class="c-votes-badge" id="votes_${c.id}">${votesCount} votos</div>
         <div class="c-actions">
           <button class="btn-icon" onclick="editCandidate(${i})" title="Editar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -317,48 +558,30 @@
   }
 
   function updateVoteCounts(votes) {
-    candidates.forEach(c => {
-      const el = document.getElementById('votes_' + c.id);
-      if (el) el.textContent = (votes[c.id] || 0) + ' votos';
+    categories.forEach(cat => {
+      (cat.candidates || []).forEach(c => {
+        const el = document.getElementById('votes_' + c.id);
+        if (el) el.textContent = (votes[c.id] || 0) + ' votos';
+      });
     });
     renderResults(votes);
   }
 
-  function renderResults(votes) {
-    const area = document.getElementById('resultsArea');
-    if (!candidates.length) { area.innerHTML = '<p class="empty-list">Sem candidatos.</p>'; return; }
-    const sorted = [...candidates].map(c => ({ ...c, count: votes[c.id] || 0 }))
-      .sort((a,b) => b.count - a.count);
-    const total = sorted.reduce((s,c) => s + c.count, 0);
-    area.innerHTML = sorted.map((c,i) => {
-      const pct = total ? (c.count / total * 100) : 0;
-      return `
-        <div style="margin-bottom: 20px; animation: fadeUp 0.4s ${i*0.05}s both;">
-          <div style="display:flex; justify-content:space-between; margin-bottom: 8px; font-weight: 600;">
-            <div style="display:flex; align-items:center; gap:12px;">
-              <span style="font-family:monospace; opacity:0.5;">#${i+1}</span>
-              <span>${c.name}</span>
-            </div>
-            <div style="text-align:right;">
-              <span style="color:var(--accent); font-weight:700;">${c.count}</span>
-              <span style="font-size:0.75rem; opacity:0.6; margin-left:4px;">(${pct.toFixed(1)}%)</span>
-            </div>
-          </div>
-          <div style="height:10px; background:var(--surface2); border-radius:20px; overflow:hidden; border:1px solid var(--border);">
-            <div style="height:100%; width:${pct}%; background:linear-gradient(90deg, var(--accent), #ff007a); border-radius:20px; transition: width 1s cubic-bezier(0.16, 1, 0.3, 1);"></div>
-          </div>
-        </div>
-      `;
-    }).join('');
-    document.getElementById('totalVotes').textContent = total.toLocaleString();
+  function populateCandidateCategorySelect(selectedCatId) {
+    const select = document.getElementById('c_category');
+    if (!select) return;
+    select.innerHTML = categories.map((cat) => `
+      <option value="${cat.id}" ${cat.id === selectedCatId ? 'selected' : ''}>
+        ${cat.name}
+      </option>
+    `).join('');
   }
-
-  // ---- ADD / EDIT CANDIDATE ----
-  let editingIndex = -1;
 
   window.openAddCandidate = function() {
     editingIndex = -1;
-    document.getElementById('candidateModalTitle').textContent = 'Adicionar Candidato';
+    const currentCat = categories[activeCatIndex];
+    document.getElementById('candidateModalTitle').textContent = `Adicionar Candidato — ${currentCat ? currentCat.name : ''}`;
+    populateCandidateCategorySelect(currentCat ? currentCat.id : (categories[0] && categories[0].id));
     document.getElementById('c_name').value = '';
     document.getElementById('c_number').value = '';
     document.getElementById('c_subtitle').value = '';
@@ -371,8 +594,10 @@
 
   window.editCandidate = function(i) {
     editingIndex = i;
-    const c = candidates[i];
-    document.getElementById('candidateModalTitle').textContent = 'Editar Candidato';
+    const currentCat = categories[activeCatIndex];
+    const c = currentCat.candidates[i];
+    document.getElementById('candidateModalTitle').textContent = `Editar Candidato — ${c.name}`;
+    populateCandidateCategorySelect(currentCat.id);
     document.getElementById('c_name').value = c.name || '';
     document.getElementById('c_number').value = c.number || '';
     document.getElementById('c_subtitle').value = c.subtitle || '';
@@ -389,33 +614,48 @@
   };
 
   window.removeCandidate = async function(i) {
-    if (!confirm(`Remover "${candidates[i].name}"?`)) return;
-    candidates.splice(i, 1);
-    await set(ref(db, 'config/candidates'), candidates);
-    logAction(`Candidato removido: ${candidates[i]?.name || 'unknown'}`);
+    const currentCat = categories[activeCatIndex];
+    if (!currentCat || !currentCat.candidates[i]) return;
+    const candName = currentCat.candidates[i].name;
+    if (!confirm(`Remover "${candName}" da categoria "${currentCat.name}"?`)) return;
+
+    currentCat.candidates.splice(i, 1);
+    await saveAllCategoriesToFirebase();
+    logAction(`Candidato removido: ${candName} (${currentCat.name})`);
+    renderCategoryTabs();
+    renderCandidateList();
+    renderResults(latestVotes);
+    renderRevealCandidates();
   };
 
   window.saveCandidate = async function() {
     const name = document.getElementById('c_name').value.trim();
-    if (!name) { alert('Nome obrigatório!'); return; }
-    
+    if (!name) { alert('Nome do candidato é obrigatório!'); return; }
+
+    const targetCatId = document.getElementById('c_category').value;
+    const targetCat = categories.find(cat => cat.id === targetCatId) || categories[activeCatIndex];
+    if (!targetCat) { alert('Categoria inválida!'); return; }
+
     const numStr = document.getElementById('c_number').value.trim();
     const photo = document.getElementById('c_photoB64').value;
-    const editingId = editingIndex >= 0 ? candidates[editingIndex].id : 'c_' + Date.now();
+    const sourceCat = categories[activeCatIndex];
+    const editingId = (editingIndex >= 0 && sourceCat.candidates[editingIndex])
+      ? sourceCat.candidates[editingIndex].id
+      : 'c_' + Date.now();
 
-    // Lógica de Shift Automático
+    // If candidate was in a different category, remove from old category
+    if (editingIndex >= 0 && sourceCat.id !== targetCat.id) {
+      sourceCat.candidates.splice(editingIndex, 1);
+    }
+
+    let tempCandidates = JSON.parse(JSON.stringify(targetCat.candidates || []));
+    if (editingIndex >= 0 && sourceCat.id === targetCat.id) {
+      tempCandidates.splice(editingIndex, 1);
+    }
+
     if (numStr) {
       let targetNum = parseInt(numStr);
       if (!isNaN(targetNum)) {
-        // Criar uma cópia para trabalhar
-        let tempCandidates = JSON.parse(JSON.stringify(candidates));
-        
-        // Se estivermos a editar, removemos o original temporariamente para o shift
-        if (editingIndex >= 0) {
-          tempCandidates.splice(editingIndex, 1);
-        }
-
-        // Função recursiva para empurrar os números
         function pushDown(n) {
           let conflict = tempCandidates.find(c => parseInt(c.number) === n);
           if (conflict) {
@@ -424,8 +664,7 @@
           }
         }
         pushDown(targetNum);
-        
-        // Novo candidato
+
         const newC = {
           id: editingId,
           name,
@@ -434,14 +673,11 @@
           description: document.getElementById('c_description').value.trim(),
           photo: photo || null
         };
-        
         tempCandidates.push(newC);
-        // Re-ordenar por número para manter a lista organizada no admin
         tempCandidates.sort((a,b) => (parseInt(a.number)||999) - (parseInt(b.number)||999));
-        candidates = tempCandidates;
+        targetCat.candidates = tempCandidates;
       }
     } else {
-      // Sem número, lógica normal
       const candidate = {
         id: editingId,
         name,
@@ -450,17 +686,39 @@
         description: document.getElementById('c_description').value.trim(),
         photo: photo || null,
       };
-      if (editingIndex >= 0) candidates[editingIndex] = candidate;
-      else candidates.push(candidate);
+      tempCandidates.push(candidate);
+      targetCat.candidates = tempCandidates;
     }
 
-    await set(ref(db, 'config/candidates'), candidates);
+    await saveAllCategoriesToFirebase();
     closeModal('candidateModal');
-    logAction(`Candidato guardado (com shift): ${name}`);
-    showToast('✅ Candidato guardado e números atualizados!');
+    logAction(`Candidato guardado: ${name} em "${targetCat.name}"`);
+    renderCategoryTabs();
+    renderCandidateList();
+    renderResults(latestVotes);
+    renderRevealCandidates();
+    showToast('✅ Candidato guardado com sucesso!');
   };
 
   // ---- BROADCAST CONTROL ----
+  function renderBroadcastCatFilter() {
+    const sel = document.getElementById('broadcastCatSelect');
+    if (!sel) return;
+    const currentBcCatId = config.broadcast?.catId || (categories[0] && categories[0].id);
+    sel.innerHTML = categories.map(cat => `
+      <option value="${cat.id}" ${cat.id === currentBcCatId ? 'selected' : ''}>
+        ${cat.name}
+      </option>
+    `).join('');
+  }
+
+  window.onBroadcastCategoryChange = async function(catId) {
+    await set(ref(db, 'config/broadcast/catId'), catId);
+    renderRevealCandidates();
+    const cat = categories.find(c => c.id === catId);
+    showToast(`📺 Categoria ativa para OBS: ${cat ? cat.name : 'Selecionada'}`);
+  };
+
   window.triggerReveal = async function(cid) {
     await set(ref(db, 'config/reveal'), { candidateId: cid, active: true });
     logAction(`Revelação iniciada: ${cid}`);
@@ -504,20 +762,24 @@
     const mode = config.broadcastMode || 'votes';
     const ESC_POINTS = [12, 10, 8, 7, 6, 5, 4, 3, 2, 1];
 
-    // Ranking Real (para saber os pontos de cada um)
-    const realRanking = [...candidates]
+    const bcCatId = config.broadcast?.catId || (categories[0] && categories[0].id);
+    const activeBcCat = categories.find(c => c.id === bcCatId) || categories[0];
+    const catCandidates = activeBcCat ? (activeBcCat.candidates || []) : candidates;
+
+    // Ranking Real para esta categoria
+    const realRanking = [...catCandidates]
       .map(c => ({ id: c.id, votes: latestVotes[c.id] || 0 }))
       .sort((a, b) => b.votes - a.votes);
 
-    // Dinâmico: Ordenar por votos (do último para o primeiro) para facilitar a revelação
-    const sortedForReveal = [...candidates]
+    // Dinâmico: Ordenar por votos (do menor para o maior para suspense)
+    const sortedForReveal = [...catCandidates]
       .map(c => {
         const votes = latestVotes[c.id] || 0;
         const rankIdx = realRanking.findIndex(r => r.id === c.id);
         const points = (mode === 'points' && votes > 0) ? (ESC_POINTS[rankIdx] || 0) : (mode === 'points' ? 0 : votes);
         return { ...c, votes, points };
       })
-      .sort((a, b) => a.votes - b.votes); // Sempre do menor para o maior para suspense
+      .sort((a, b) => a.votes - b.votes);
 
     sortedForReveal.forEach((c, idx) => {
       const isCelebrating = currentReveal.active && currentReveal.candidateId === c.id;
@@ -525,7 +787,7 @@
       const isWinner = idx === sortedForReveal.length - 1;
       const displayPoints = mode === 'points' ? `${c.points} pts` : `${c.votes} votos`;
 
-      // Grid para 12 pontos (Apenas no grid de baixo se quiseres celebrar)
+      // Grid para 12 pontos
       const card = document.createElement('div');
       card.className = 'tpl-card' + (isCelebrating ? ' tpl-applied' : '');
       card.style.padding = '15px';
@@ -567,69 +829,122 @@
       mgrGrid.appendChild(mCard);
     });
 
-    // Mostrar secção de celebração apenas se houver um vencedor claro ou se o user quiser
     document.getElementById('celebrationSection').style.display = 'block';
   }
 
-  window.closeModal = function(id) {
-    document.getElementById(id).classList.remove('show');
+  // ---- RESULTS BY CATEGORY ----
+  function renderResultsCatFilter() {
+    const filterContainer = document.getElementById('resultsCatFilter');
+    if (!filterContainer) return;
+    filterContainer.innerHTML = `
+      <button class="tpl-filter-btn ${selectedResultsCat === 'all' ? 'active' : ''}" onclick="selectResultsCat('all')">
+        Todas as Categorias
+      </button>
+    ` + categories.map(cat => `
+      <button class="tpl-filter-btn ${selectedResultsCat === cat.id ? 'active' : ''}" onclick="selectResultsCat('${cat.id}')">
+        ${cat.name}
+      </button>
+    `).join('');
+  }
+
+  window.selectResultsCat = function(catId) {
+    selectedResultsCat = catId;
+    renderResultsCatFilter();
+    renderResults(latestVotes);
   };
 
-  window.handlePhotoUpload = function(input) {
-    const file = input.files[0];
-    if (!file) return;
-    if (file.size > 500 * 1024) {
-      alert('Foto muito grande! Máximo: 500KB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = e => {
-      const b64 = e.target.result;
-      document.getElementById('c_photoB64').value = b64;
-      document.getElementById('c_photoPreview').src = b64;
-      document.getElementById('c_photoPreview').style.display = 'block';
-    };
-    reader.readAsDataURL(file);
-  };
+  function renderResults(votes) {
+    const area = document.getElementById('resultsArea');
+    if (!area) return;
 
-  window.handleBannerLogoUpload = function(input) {
-    const file = input.files[0];
-    if (!file) return;
-    if (file.size > 500 * 1024) {
-      alert('Logo muito grande! Máximo: 500KB.');
+    const totalAllVotes = Object.values(votes).reduce((s, c) => s + c, 0);
+    const totalEl = document.getElementById('totalVotes');
+    if (totalEl) totalEl.textContent = totalAllVotes.toLocaleString();
+
+    let catsToShow = categories;
+    if (selectedResultsCat !== 'all') {
+      catsToShow = categories.filter(c => c.id === selectedResultsCat);
+    }
+
+    if (!catsToShow.length) {
+      area.innerHTML = '<p class="empty-list">Sem categorias disponíveis.</p>';
       return;
     }
-    const reader = new FileReader();
-    reader.onload = e => {
-      const b64 = e.target.result;
-      document.getElementById('f_bannerLogoB64').value = b64;
-      document.getElementById('bannerLogoPreview').src = b64;
-      document.getElementById('bannerLogoPreview').style.display = 'block';
-    };
-    reader.readAsDataURL(file);
-  };
+
+    area.innerHTML = catsToShow.map(cat => {
+      const cands = cat.candidates || [];
+      const catTotal = cands.reduce((sum, c) => sum + (votes[c.id] || 0), 0);
+      const sorted = [...cands].map(c => ({ ...c, count: votes[c.id] || 0 }))
+        .sort((a,b) => b.count - a.count);
+
+      return `
+        <div style="margin-bottom: 28px; background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <div>
+              <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--accent); font-weight:700;">Categoria</div>
+              <h3 style="font-size:1.15rem; font-weight:700; margin-top:2px;">${cat.name}</h3>
+            </div>
+            <div style="font-family:'DM Mono', monospace; font-size:0.85rem; color:var(--text-muted);">
+              Total na categoria: <strong style="color:var(--text);">${catTotal}</strong> votos
+            </div>
+          </div>
+          ${!sorted.length ? '<p style="color:var(--text-muted); font-size:0.85rem; font-style:italic;">Sem candidatos nesta categoria.</p>' : ''}
+          ${sorted.map((c, i) => {
+            const pct = catTotal ? (c.count / catTotal * 100) : 0;
+            return `
+              <div style="margin-bottom: 16px;">
+                <div style="display:flex; justify-content:space-between; margin-bottom: 6px; font-weight: 600; font-size:0.88rem;">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-family:'DM Mono', monospace; opacity:0.5;">#${i+1}</span>
+                    <span>${c.name}</span>
+                    <span style="color:var(--text-muted); font-size:0.75rem; font-weight:normal;">${c.subtitle ? `(${c.subtitle})` : ''}</span>
+                  </div>
+                  <div style="text-align:right;">
+                    <span style="color:var(--accent); font-weight:700;">${c.count}</span>
+                    <span style="font-size:0.75rem; opacity:0.6; margin-left:4px;">(${pct.toFixed(1)}%)</span>
+                  </div>
+                </div>
+                <div style="height:8px; background:var(--surface); border-radius:20px; overflow:hidden; border:1px solid var(--border);">
+                  <div style="height:100%; width:${pct}%; background:linear-gradient(90deg, var(--accent), var(--accent2)); border-radius:20px; transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);"></div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }).join('');
+  }
 
   window.exportCSV = function() {
     get(ref(db, 'votes')).then(snap => {
       const votes = snap.val() || {};
-      const sorted = [...candidates].map(c => ({ ...c, count: votes[c.id] || 0 }))
-        .sort((a,b) => b.count - a.count);
-      const total = sorted.reduce((s,c) => s + c.count, 0);
-      let csv = 'Posição,Nome,Subtítulo,Votos,Percentagem\n';
-      sorted.forEach((c,i) => {
-        const pct = total ? (c.count / total * 100).toFixed(1) : '0.0';
-        csv += `${i+1},"${c.name}","${c.subtitle || ''}",${c.count},${pct}%\n`;
+      let csv = 'Categoria,Posição,Nome,Subtítulo,Votos,Percentagem_Categoria\n';
+
+      categories.forEach(cat => {
+        const cands = cat.candidates || [];
+        const catTotal = cands.reduce((sum, c) => sum + (votes[c.id] || 0), 0);
+        const sorted = [...cands].map(c => ({ ...c, count: votes[c.id] || 0 }))
+          .sort((a,b) => b.count - a.count);
+
+        sorted.forEach((c, i) => {
+          const pct = catTotal ? (c.count / catTotal * 100).toFixed(1) : '0.0';
+          csv += `"${cat.name}",${i+1},"${c.name}","${c.subtitle || ''}",${c.count},${pct}%\n`;
+        });
+        csv += `"${cat.name}",Total,,,"${catTotal}","100%"\n\n`;
       });
-      csv += `\nTotal,,${total},100%\n`;
-      csv += `\nExportado em,${new Date().toLocaleString('pt-PT')}\n`;
+
+      const totalAll = Object.values(votes).reduce((s, c) => s + c, 0);
+      csv += `Total Global de Votos,,,,${totalAll},\n`;
+      csv += `Exportado em,"${new Date().toLocaleString('pt-PT')}",,,,\n`;
+
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `resultados_${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `resultados_categorias_${new Date().toISOString().slice(0,10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast('📊 CSV exportado!');
+      showToast('📊 CSV com categorias exportado!');
     });
   };
 
@@ -790,6 +1105,13 @@
     _origShowSection(name, el);
     if (name === 'templates') buildTemplatesSection();
   };
+
+  document.getElementById('categoryModal')?.addEventListener('click', e => {
+    if (e.target.id === 'categoryModal') closeModal('categoryModal');
+  });
+  document.getElementById('candidateModal')?.addEventListener('click', e => {
+    if (e.target.id === 'candidateModal') closeModal('candidateModal');
+  });
 
   checkAuth();
 
@@ -1212,6 +1534,48 @@
   .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
   .btn-danger { background: rgba(255,85,85,0.1); border: 1px solid rgba(255,85,85,0.3); color: var(--danger); }
   .btn-danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+
+  /* ━━━━━━━━━━━━━━━━ CATEGORIES (OSCARS) ━━━━━━━━━━━━━━━━ */
+  .admin-cat-tabs-wrap {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    margin-bottom: 20px;
+  }
+  .admin-cat-tab {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 18px; border-radius: 9px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-muted); cursor: pointer;
+    font-family: 'Outfit', sans-serif; font-size: 0.85rem; font-weight: 600;
+    transition: all 0.15s ease;
+  }
+  .admin-cat-tab:hover {
+    border-color: var(--accent); color: var(--text); background: var(--surface3);
+  }
+  .admin-cat-tab.active {
+    background: var(--accent-dim); border-color: var(--accent);
+    color: var(--accent); box-shadow: 0 0 16px rgba(255, 62, 222, 0.15);
+  }
+  .admin-cat-tab.add-btn {
+    border-style: dashed; border-color: var(--border-light);
+    color: var(--accent);
+  }
+  .admin-cat-tab.add-btn:hover {
+    background: var(--accent-dim); border-style: solid;
+  }
+  .admin-cat-tab-count {
+    opacity: 0.65; font-size: 0.78rem; font-family: 'DM Mono', monospace;
+  }
+  .admin-cat-meta-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; margin-bottom: 24px;
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .admin-cat-meta-left { flex: 1; min-width: 240px; }
+  .admin-cat-meta-title { font-size: 1.2rem; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .admin-cat-meta-desc { font-size: 0.85rem; color: var(--text-muted); }
+  .admin-cat-meta-count { font-size: 0.75rem; color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 6px; }
+  .admin-cat-actions-row { display: flex; gap: 8px; align-items: center; }
 
   /* ━━━━━━━━━━━━━━━━ CANDIDATES ━━━━━━━━━━━━━━━━ */
   .candidates-toolbar {
@@ -1718,7 +2082,7 @@
           <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span> Evento
         </a>
         <a class="nav-item" onclick="showSection('candidates',this)">
-          <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><circle cx="19" cy="11" r="3"/></svg></span> Candidatos
+          <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><circle cx="19" cy="11" r="3"/></svg></span> Categorias & Candidatos
         </a>
         <a class="nav-item" onclick="showSection('theme',this)">
           <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l5 5"/><path d="M9.5 14.5L16 8"/></svg></span> Tema
@@ -1854,22 +2218,27 @@
         </div>
 
         <div class="card">
-          <div class="card-title card-title-accent">Configuração de Pontuação</div>
-          <div style="display: flex; gap: 24px; margin-top: 15px;">
-            <label class="form-group" style="flex: 1; margin-bottom:0">
+          <div class="card-title card-title-accent">Configuração de Pontuação & Categoria</div>
+          <div style="display: flex; gap: 20px; margin-top: 15px; flex-wrap: wrap;">
+            <div class="form-group" style="flex: 1; min-width: 220px; margin-bottom:0">
+              <label>Categoria Ativa no OBS / Transmissão</label>
+              <select id="broadcastCatSelect" class="form-control" onchange="onBroadcastCategoryChange(this.value)" style="width:100%; padding: 10px; border-radius: 8px; background: var(--surface2); color: var(--text); border: 1px solid var(--border);">
+              </select>
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 200px; margin-bottom:0">
               <label>Modo de Exibição</label>
               <select id="f_broadcastMode" class="form-control" onchange="updateBroadcastConfig()" style="width:100%; padding: 10px; border-radius: 8px; background: var(--surface2); color: var(--text); border: 1px solid var(--border);">
                 <option value="votes">🔢 Votos Reais (Contagem direta)</option>
                 <option value="points">🎤 Pontos ESC (12, 10, 8...)</option>
               </select>
-            </label>
-            <div style="flex: 1; display:flex; align-items:center; gap:12px; padding-top:20px;">
+            </div>
+            <div style="flex: 1; min-width: 200px; display:flex; align-items:center; gap:12px; padding-top:20px;">
               <label class="toggle">
                 <input type="checkbox" id="f_revealActive" onchange="updateBroadcastConfig()"/>
                 <div class="toggle-track"></div>
                 <div class="toggle-thumb"></div>
               </label>
-              <span style="font-size:0.85rem;font-weight:600">Modo de Revelação Ativo (Esconde todos no início)</span>
+              <span style="font-size:0.85rem;font-weight:600">Modo Revelação Ativo</span>
             </div>
           </div>
         </div>
@@ -1877,8 +2246,7 @@
         <div class="card">
           <div class="card-title card-title-accent">Sequência de Revelação (Menor para Maior)</div>
           <p style="margin-bottom: 20px; font-size: 0.85rem; color: var(--text-muted);">
-            Os candidatos estão ordenados do que tem **menos votos** para o que tem **mais votos**. 
-            Revela-os nesta ordem para criar suspense até ao vencedor.
+            Candidatos da categoria ativa ordenados do menor para o maior número de votos para criar suspense.
           </p>
           <div id="revealManagerGrid" class="tpl-grid">
             <!-- Injected by JS -->
@@ -1893,9 +2261,6 @@
           <div id="revealCandidatesGrid" class="tpl-grid">
             <!-- Injected by JS -->
           </div>
-          <p style="margin-top: 15px; font-size: 0.75rem; color: var(--text-muted); font-style: italic;">
-            💡 Dica: Podes mudar o <b>Número</b> de cada candidato na aba <b>Candidatos</b>.
-          </p>
         </div>
       </div>
 
@@ -1904,12 +2269,13 @@
         <div class="page-header">
           <div class="page-header-left">
             <h1>Resultados</h1>
-            <p>Actualizado em tempo real</p>
+            <p>Contagem em tempo real dividida por categoria</p>
           </div>
-          <button class="btn btn-secondary" onclick="exportCSV()">📊 Exportar CSV</button>
+          <button class="btn btn-secondary" onclick="exportCSV()">📊 Exportar CSV com Categorias</button>
         </div>
         <div class="card">
-          <div class="card-title card-title-accent">Rankings</div>
+          <div class="card-title card-title-accent">Filtrar por Categoria</div>
+          <div id="resultsCatFilter" class="preset-row" style="margin-bottom: 20px;"></div>
           <div id="resultsArea"></div>
         </div>
       </div>
@@ -1966,14 +2332,49 @@
       <div id="sec_candidates" class="section">
         <div class="page-header">
           <div class="page-header-left">
-            <h1>Candidatos</h1>
-            <p>Gere os candidatos da votação</p>
+            <h1>Categorias & Candidatos</h1>
+            <p>Gere as categorias da votação (tipo Óscares) e os candidatos de cada categoria</p>
+          </div>
+          <button class="btn btn-primary" onclick="openAddCategory()">+ Nova Categoria</button>
+        </div>
+
+        <!-- Categorias Tabs -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="card-title card-title-accent">Categorias da Votação</div>
+          <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 14px;">
+            Cria as várias categorias da tua votação (como Filme do Ano, Realizador do Ano, etc.). Na página de votação dos utilizadores, cada categoria aparece como uma página autónoma com navegação.
+          </p>
+          <div id="categoryTabs" class="admin-cat-tabs-wrap"></div>
+
+          <!-- Active Category Control Bar -->
+          <div class="admin-cat-meta-card">
+            <div class="admin-cat-meta-left">
+              <div class="admin-cat-meta-title" id="activeCatMetaTitle">Nome da Categoria</div>
+              <div class="admin-cat-meta-desc" id="activeCatMetaDesc">Descrição da categoria</div>
+              <div class="admin-cat-meta-count" id="activeCatMetaCount">0 candidatos configurados</div>
+            </div>
+            <div class="admin-cat-actions-row">
+              <button class="btn btn-secondary" onclick="openEditCategory()" title="Editar nome e descrição da categoria">
+                ✏️ Editar
+              </button>
+              <button class="btn btn-secondary" onclick="moveCategory(-1)" title="Mover para a esquerda">
+                ←
+              </button>
+              <button class="btn btn-secondary" onclick="moveCategory(1)" title="Mover para a direita">
+                →
+              </button>
+              <button class="btn btn-danger" onclick="removeCategory()" title="Eliminar categoria">
+                🗑️ Eliminar
+              </button>
+            </div>
           </div>
         </div>
+
+        <!-- Candidatos da Categoria -->
         <div class="card">
           <div class="candidates-toolbar">
-            <p>Candidatos disponíveis</p>
-            <button class="btn btn-primary" onclick="openAddCandidate()">+ Adicionar</button>
+            <p>Candidatos / Concorrentes nesta categoria</p>
+            <button class="btn btn-primary" onclick="openAddCandidate()">+ Adicionar Candidato</button>
           </div>
           <div id="candidateList"></div>
         </div>
@@ -2104,12 +2505,39 @@
   </div>
 </div>
 
+<!-- CATEGORY MODAL -->
+<div class="modal-overlay" id="categoryModal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="categoryModalTitle">Nova Categoria</h3>
+      <button class="modal-close" onclick="closeModal('categoryModal')">✕</button>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Nome da Categoria *</label>
+      <input type="text" id="cat_name" placeholder="ex: Filme do Ano, Realizador do Ano..."/>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Descrição / Subtítulo</label>
+      <input type="text" id="cat_description" placeholder="ex: Escolhe a melhor obra cinematográfica do ano"/>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('categoryModal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveCategory()">💾 Guardar Categoria</button>
+    </div>
+  </div>
+</div>
+
 <!-- CANDIDATE MODAL -->
 <div class="modal-overlay" id="candidateModal">
   <div class="modal-box">
     <div class="modal-header">
       <h3 id="candidateModalTitle">Adicionar Candidato</h3>
       <button class="modal-close" onclick="closeModal('candidateModal')">✕</button>
+    </div>
+
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Categoria *</label>
+      <select id="c_category" style="width:100%; padding: 10px; border-radius: 8px; background: var(--surface2); color: var(--text); border: 1px solid var(--border); font-family:inherit;"></select>
     </div>
 
     <div class="form-row">
@@ -2123,8 +2551,8 @@
       </div>
     </div>
     <div class="form-group" style="margin-bottom:16px">
-      <label>Subtítulo / Categoria</label>
-      <input type="text" id="c_subtitle" placeholder="ex: Fado, Best Actress, Portugal..."/>
+      <label>Subtítulo / Papel / Detalhe</label>
+      <input type="text" id="c_subtitle" placeholder="ex: Universal Pictures, Realizador, Portugal..."/>
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label>Descrição (opcional)</label>

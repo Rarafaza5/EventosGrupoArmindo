@@ -35,15 +35,23 @@ config/
   theme/
     bg, surface, accent, accent2, text, textMuted
     cardBg, cardBorder, fontDisplay, fontBody, radius, bgImage
-  candidates/[]
-    id, name, subtitle, description, photo (base64)
+  categories/[]   → Lista de categorias (estilo Óscares)
+    id, name, description
+    candidates/[]
+      id, name, number, subtitle, description, photo (base64)
+  candidates/[]   → Lista unificada de todos os candidatos (retrocompatibilidade)
 
 votes/
   {candidateId}   → número inteiro de votos
 
 voted_fingerprints/
   {sessionId}/
-    {deviceFingerprint} → { candidateId, candidateName, timestamp, ua }
+    {deviceFingerprint} → {
+      categories: {
+        {categoryId}: { candidateId, candidateName, categoryName, timestamp }
+      },
+      candidateId, candidateName, timestamp, ua
+    }
 ```
 
 ---
